@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Shadow Eater</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #a200ff; color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #a200ff; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(162, 0, 255, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #a200ff; color: white; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+
+        #cam-video { display: none; }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #a200ff; margin-bottom: 10px;">Shadow Eater</h2>
+        <p style="color: #888899; line-height: 1.5;">This entity hates the light. Drag your finger to guide it to eat the floating particles.<br><br><b>Cover your front camera</b> or go into a dark room to make it feel safe. If it gets too bright, it will panic, shrink, and hide in the corner!</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Camera Access Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Used to detect ambient room brightness. No video is saved.</p>
+        <button id="start-btn">Enable Camera & Start</button>
+    </div>
+
+    <video id="cam-video" autoplay playsinline></video>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('cam-video');
+        
+        const offscreenCanvas = document.createElement('canvas');
+        const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+        offscreenCanvas.width = 32; offscreenCanvas.height = 32;
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if(!entity.x) {
+                entity.x = canvas.width / 2;
+                entity.y = canvas.height / 2;
+            }
+        }
+        window.addEventListener('resize', resize);
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Game State
+        let ambientLightLevel = 255;
+        let smoothedLight = 255;
+        let pointer = { x: window.innerWidth/2, y: window.innerHeight/2 };
+        let isTouching = false;
+
+        let particles = [];
+        for(let i=0; i<15; i++) {
+            particles.push(createParticle());
+        }
+
+        function createParticle() {
+            return {
+                x: Math.random() * window.innerWidth,
+                y: Math.random() * window.innerHeight,
+                vx: (Math.random() - 0.5) * 1,
+                vy: (Math.random() - 0.5) * 1,
+                size: Math.random() * 3 + 2,
+                hue: Math.floor(Math.random() * 60) + 180 // Blues and cyans
+            };
+        }
+
+        // Entity State
+        let entity = {
+            x: 0, y: 0,
+            radius: 40,
+            targetRadius: 40,
+            fear: 0 // 0 = calm, 1 = terrified
+        };
+
+        // Start Camera
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    resize();
+                    document.getElementById('start-overlay').style.display = 'none';
+                    loop();
+                };
+            } catch (err) {
+                alert("Camera access denied. The entity will assume it is always bright out.");
+                resize();
+                document.getElementById('start-overlay').style.display = 'none';
+                loop();
+            }
+        });
+
+        // Input
+        canvas.addEventListener('pointerdown', (e) => { isTouching = true; pointer.x = e.clientX; pointer.y = e.clientY; });
+        canvas.addEventListener('pointermove', (e) => { if(isTouching) { pointer.x = e.clientX; pointer.y = e.clientY; } });
+        canvas.addEventListener('pointerup', () => { isTouching = false; });
+
+        function calculateBrightness() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                offscreenCtx.drawImage(video, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                const data = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data;
+                let colorSum = 0;
+                for (let x = 0; x < data.length; x += 4) {
+                    colorSum += Math.floor((data[x] + data[x + 1] + data[x + 2]) / 3);
+                }
+                ambientLightLevel = Math.floor(colorSum / (offscreenCanvas.width * offscreenCanvas.height));
+            }
+        }
+
+        function loop() {
+            calculateBrightness();
+            smoothedLight += (ambientLightLevel - smoothedLight) * 0.1;
+
+            // Fear maps to light level (e.g., > 80 is scary, < 40 is calm)
+            entity.fear = Math.max(0, Math.min(1, (smoothedLight - 40) / 60));
+
+            ctx.fillStyle = 'rgba(15, 15, 19, 0.4)'; // Trail effect
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Logic: Update Entity Target
+            let targetX, targetY;
+            
+            if (entity.fear > 0.5) {
+                // Scared: Shrink and run to nearest corner
+                entity.targetRadius = 15;
+                targetX = (entity.x < canvas.width / 2) ? 50 : canvas.width - 50;
+                targetY = (entity.y < canvas.height / 2) ? 50 : canvas.height - 50;
+                
+                // Jitter when scared
+                targetX += (Math.random() - 0.5) * 20;
+                targetY += (Math.random() - 0.5) * 20;
+            } else {
+                // Calm: Grow and follow pointer
+                entity.targetRadius = 50 + Math.sin(Date.now() / 300) * 10; // Breathing effect
+                if (isTouching) {
+                    targetX = pointer.x;
+                    targetY = pointer.y;
+                } else {
+                    // Drift lazily if not touching
+                    targetX = entity.x + Math.sin(Date.now() / 1000) * 2;
+                    targetY = entity.y + Math.cos(Date.now() / 800) * 2;
+                }
+            }
+
+            // Move entity smoothly
+            let speed = entity.fear > 0.5 ? 0.15 : 0.05; // Runs fast when scared, moves smooth when calm
+            entity.x += (targetX - entity.x) * speed;
+            entity.y += (targetY - entity.y) * speed;
+            entity.radius += (entity.targetRadius - entity.radius) * 0.1;
+
+            // Draw Particles (Food)
+            particles.forEach((p, index) => {
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Bounce
+                if(p.x < 0 || p.x > canvas.width) p.vx *= -1;
+                if(p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+                // Eat particle if calm and close enough
+                let dist = Math.hypot(entity.x - p.x, entity.y - p.y);
+                if (entity.fear < 0.5 && dist < entity.radius) {
+                    particles.splice(index, 1);
+                    particles.push(createParticle());
+                    entity.targetRadius += 5; // Little size bump when eating
+                } else if (entity.fear > 0.5 && dist < 100) {
+                    // Run away from scared entity
+                    p.x += (p.x - entity.x) * 0.05;
+                    p.y += (p.y - entity.y) * 0.05;
+                }
+
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+                ctx.fillStyle = `hsl(${p.hue}, 100%, 60%)`;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = `hsl(${p.hue}, 100%, 60%)`;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            // Draw Entity
+            let r = 162 + (entity.fear * 93);  // Shifts from Purple (162) to Red (255)
+            let g = 0;
+            let b = 255 - (entity.fear * 255); // Shifts from Purple (255) to Red (0)
+            let color = `rgb(${r}, ${g}, ${b})`;
+
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = color;
+            
+            // Draw core and outer glow layers
+            for(let i = 3; i > 0; i--) {
+                ctx.beginPath();
+                ctx.arc(entity.x, entity.y, entity.radius * (i * 0.33), 0, Math.PI*2);
+                ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.2 / i})`;
+                ctx.fill();
+            }
+            
+            ctx.beginPath();
+            ctx.arc(entity.x, entity.y, entity.radius * 0.2, 0, Math.PI*2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
