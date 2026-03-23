@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sensory Arcade</title>
+    <style>
+        :root {
+            --bg-color: #0f0f13;
+            --card-bg: #1c1c24;
+            --accent: #00f0ff;
+            --text-main: #ffffff;
+            --text-muted: #888899;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        h1 {
+            margin: 20px 0 40px;
+            font-size: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+            text-align: center;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 900px;
+            padding-bottom: 40px;
+        }
+
+        a { text-decoration: none; color: inherit; }
+
+        .game-card {
+            background-color: var(--card-bg);
+            border-radius: 16px;
+            padding: 25px 15px;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 1px solid rgba(255,255,255,0.05);
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .game-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 240, 255, 0.15);
+            border-color: rgba(0, 240, 255, 0.3);
+        }
+
+        .game-icon { font-size: 3rem; margin-bottom: 15px; }
+        .game-title { font-size: 1rem; font-weight: 600; }
+        
+        .disabled { opacity: 0.3; pointer-events: none; filter: grayscale(100%); }
+    </style>
+</head>
+<body>
+
+    <h1>Sensory Arcade</h1>
+    
+    <div class="grid">
+        <a href="whisper.html">
+            <div class="game-card">
+                <div class="game-icon">🫧</div>
+                <div class="game-title">Whisper Bubbles</div>
+            </div>
+        </a>
+        <a href="slingshot.html">
+            <div class="game-card">
+                <div class="game-icon">☄️</div>
+                <div class="game-title">Neon Slingshot</div>
+            </div>
+        </a>
+
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🕸️</div><div class="game-title">Plasma Web</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🧪</div><div class="game-title">Fluid Sandbox</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🖍️</div><div class="game-title">Rage-Erase</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">👁️</div><div class="game-title">Peek-a-Boo</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🌀</div><div class="game-title">Infinite Spin</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🎤</div><div class="game-title">Vocal EQ</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🎨</div><div class="game-title">Spray Can</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">⚖️</div><div class="game-title">Glass Balance</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">👻</div><div class="game-title">Shadow Eater</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🧭</div><div class="game-title">Constellation</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🪴</div><div class="game-title">Kinetic Zen</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">🎈</div><div class="game-title">Scream Balloon</div></div></a>
+        <a href="#" class="disabled"><div class="game-card"><div class="game-icon">❄️</div><div class="game-title">Micro Fractal</div></div></a>
+    </div>
+
+</body>
+</html>
