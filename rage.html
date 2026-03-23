@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rage-Erase</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #ffe600; color: black;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #ffe600; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(255, 230, 0, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #ffe600; color: black; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #ffe600; margin-bottom: 10px;">Rage-Erase</h2>
+        <p style="color: #888899; line-height: 1.5;">Draw neon art on the screen with your finger.<br><br>There is no clear button. To erase the canvas, physically <b>shake your phone</b> to shatter the drawing into pieces.</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Motion Sensor Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game needs to detect when you shake your phone.</p>
+        <button id="start-btn">Enable Shake & Start</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Drawing State
+        let paths = [];
+        let currentPath = [];
+        let isDrawing = false;
+        let hue = 0;
+
+        // Physics State (for when the drawing shatters)
+        let shatteredParticles = [];
+        let isShattering = false;
+
+        // Shake Detection State
+        let lastX, lastY, lastZ;
+        let lastTime = 0;
+        const SHAKE_THRESHOLD = 15; // Adjust sensitivity
+
+        // Input Handling
+        canvas.addEventListener('pointerdown', (e) => {
+            isDrawing = true;
+            isShattering = false; // Stop shattering if drawing again
+            currentPath = [{ x: e.clientX, y: e.clientY, h: hue }];
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (!isDrawing) return;
+            hue = (hue + 1) % 360; // Cycle colors
+            currentPath.push({ x: e.clientX, y: e.clientY, h: hue });
+        });
+
+        canvas.addEventListener('pointerup', () => {
+            if (!isDrawing) return;
+            isDrawing = false;
+            paths.push(currentPath);
+            currentPath = [];
+        });
+
+        // Handle Sensor Permission
+        document.getElementById('start-btn').addEventListener('click', () => {
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('devicemotion', handleMotion);
+                            startGame();
+                        } else {
+                            alert("Permission denied. Shake to erase will not work.");
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                window.addEventListener('devicemotion', handleMotion);
+                startGame();
+            }
+        });
+
+        function startGame() {
+            document.getElementById('start-overlay').style.display = 'none';
+            loop();
+        }
+
+        // Detect Shake
+        function handleMotion(e) {
+            let current = e.accelerationIncludingGravity;
+            if (!current.x) return; // Ignore if no data
+
+            let currentTime = Date.now();
+            if ((currentTime - lastTime) > 100) {
+                let diffTime = (currentTime - lastTime);
+                lastTime = currentTime;
+
+                let speed = Math.abs(current.x + current.y + current.z - lastX - lastY - lastZ) / diffTime * 10000;
+
+                if (speed > SHAKE_THRESHOLD) {
+                    shatterDrawing();
+                }
+
+                lastX = current.x;
+                lastY = current.y;
+                lastZ = current.z;
+            }
+        }
+
+        function shatterDrawing() {
+            if (paths.length === 0 && currentPath.length === 0) return;
+            
+            // Convert all paths into falling particles
+            let allPoints = [];
+            paths.forEach(path => allPoints = allPoints.concat(path));
+            allPoints = allPoints.concat(currentPath);
+
+            shatteredParticles = allPoints.map(p => ({
+                x: p.x,
+                y: p.y,
+                color: `hsl(${p.h}, 100%, 50%)`,
+                vx: (Math.random() - 0.5) * 10,
+                vy: (Math.random() - 0.5) * 10 - 5, // Initial upward burst
+                gravity: 0.5 + Math.random() * 0.5
+            }));
+
+            // Clear drawing arrays
+            paths = [];
+            currentPath = [];
+            isDrawing = false;
+            isShattering = true;
+        }
+
+        function loop() {
+            ctx.fillStyle = '#0f0f13';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 4;
+
+            // Draw saved paths
+            paths.forEach(path => drawPath(path));
+            
+            // Draw current path
+            if (currentPath.length > 0) {
+                drawPath(currentPath);
+            }
+
+            // Draw Shattered Particles
+            if (isShattering) {
+                for (let i = shatteredParticles.length - 1; i >= 0; i--) {
+                    let p = shatteredParticles[i];
+                    p.vy += p.gravity;
+                    p.x += p.vx;
+                    p.y += p.vy;
+
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = p.color;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = p.color;
+                    ctx.fill();
+                    ctx.shadowBlur = 0; // reset
+
+                    // Remove if off screen
+                    if (p.y > canvas.height + 10) {
+                        shatteredParticles.splice(i, 1);
+                    }
+                }
+                if (shatteredParticles.length === 0) isShattering = false;
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        function drawPath(path) {
+            if (path.length < 2) return;
+            for (let i = 1; i < path.length; i++) {
+                ctx.beginPath();
+                ctx.moveTo(path[i-1].x, path[i-1].y);
+                ctx.lineTo(path[i].x, path[i].y);
+                ctx.strokeStyle = `hsl(${path[i].h}, 100%, 50%)`;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = `hsl(${path[i].h}, 100%, 50%)`;
+                ctx.stroke();
+            }
+            ctx.shadowBlur = 0; // reset
+        }
+    </script>
+</body>
+</html>
