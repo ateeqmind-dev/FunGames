@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Peek-a-Boo</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #00ff88; color: black;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #00ff88; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(0, 255, 136, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #00ff88; color: black; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+
+        /* Hidden video element for light detection */
+        #cam-video { display: none; }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #00ff88; margin-bottom: 10px;">Peek-a-Boo Geometry</h2>
+        <p style="color: #888899; line-height: 1.5;">This game uses your front camera to detect light.<br><br>Hover your hand over the screen to cast a shadow. The darker it gets, the more the hidden mandala reveals its vibrant colors.</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Camera Access Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Used locally to detect ambient light. No video is recorded.</p>
+        <button id="start-btn">Enable Camera & Start</button>
+    </div>
+
+    <video id="cam-video" autoplay playsinline></video>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('cam-video');
+        
+        // Offscreen canvas for sampling light
+        const offscreenCanvas = document.createElement('canvas');
+        const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+        offscreenCanvas.width = 32;
+        offscreenCanvas.height = 32;
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        let rotation = 0;
+        let ambientLightLevel = 255; // 0 (dark) to 255 (bright)
+        let smoothedLightLevel = 255;
+
+        // Start Camera
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user" }, 
+                    audio: false 
+                });
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    document.getElementById('start-overlay').style.display = 'none';
+                    loop();
+                };
+            } catch (err) {
+                alert("Camera access denied or not available. Light detection won't work.");
+            }
+        });
+
+        // Calculate average brightness from the camera feed
+        function calculateBrightness() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                offscreenCtx.drawImage(video, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                const data = imageData.data;
+                
+                let r, g, b, avg;
+                let colorSum = 0;
+
+                for (let x = 0, len = data.length; x < len; x += 4) {
+                    r = data[x];
+                    g = data[x + 1];
+                    b = data[x + 2];
+                    avg = Math.floor((r + g + b) / 3);
+                    colorSum += avg;
+                }
+                
+                ambientLightLevel = Math.floor(colorSum / (offscreenCanvas.width * offscreenCanvas.height));
+            }
+        }
+
+        function drawMandala(x, y, radius, revealFactor) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+
+            const numLayers = 6;
+            
+            for (let layer = 1; layer <= numLayers; layer++) {
+                const currentRadius = radius * (layer / numLayers);
+                const points = 6 + (layer * 2);
+                const angleStep = (Math.PI * 2) / points;
+
+                ctx.beginPath();
+                for (let i = 0; i < points; i++) {
+                    const angle = i * angleStep;
+                    const px = Math.cos(angle) * currentRadius;
+                    const py = Math.sin(angle) * currentRadius;
+                    
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+
+                // Base style: dim outline
+                ctx.strokeStyle = `rgba(255, 255, 255, 0.1)`;
+                ctx.lineWidth = 1;
+                
+                // Reveal style: vibrant colors when shadowed
+                if (revealFactor > 0.1) {
+                    const hue = (layer * 40 + rotation * 50) % 360;
+                    ctx.strokeStyle = `hsla(${hue}, 100%, 50%, ${revealFactor})`;
+                    ctx.lineWidth = 2 + (revealFactor * 2);
+                    ctx.shadowBlur = 10 * revealFactor;
+                    ctx.shadowColor = `hsla(${hue}, 100%, 50%, ${revealFactor})`;
+                    
+                    // Fill outer layers slightly
+                    if (layer > 3) {
+                        ctx.fillStyle = `hsla(${hue}, 100%, 10%, ${revealFactor * 0.5})`;
+                        ctx.fill();
+                    }
+                }
+                
+                ctx.stroke();
+                
+                // Draw connecting lines to center for inner layers
+                if (layer === 2 || layer === 4) {
+                    for (let i = 0; i < points; i++) {
+                        const angle = i * angleStep;
+                        ctx.beginPath();
+                        ctx.moveTo(0, 0);
+                        ctx.lineTo(Math.cos(angle) * currentRadius, Math.sin(angle) * currentRadius);
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            ctx.restore();
+        }
+
+        function loop() {
+            // Check light every frame
+            calculateBrightness();
+            
+            // Smooth the light transition so it doesn't flicker wildly
+            smoothedLightLevel += (ambientLightLevel - smoothedLightLevel) * 0.1;
+
+            // Map light level (approx 20 to 150 indoors) to a reveal factor (0.0 to 1.0)
+            // If it's dark (< 50), reveal is 1.0. If bright (> 120), reveal is 0.0.
+            let reveal = 1 - Math.max(0, Math.min(1, (smoothedLightLevel - 40) / 80));
+
+            // Background
+            ctx.fillStyle = '#0f0f13';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw center geometric structure
+            rotation += 0.005;
+            const maxRadius = Math.min(canvas.width, canvas.height) * 0.4;
+            
+            drawMandala(canvas.width / 2, canvas.height / 2, maxRadius, reveal);
+
+            // Draw ambient particles that also react
+            ctx.fillStyle = `rgba(0, 255, 136, ${reveal * 0.5})`;
+            for(let i = 0; i < 20; i++) {
+                const px = (Math.sin(rotation * i + i) * 0.5 + 0.5) * canvas.width;
+                const py = (Math.cos(rotation * i - i) * 0.5 + 0.5) * canvas.height;
+                ctx.beginPath();
+                ctx.arc(px, py, 2 * reveal, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
