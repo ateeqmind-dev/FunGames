@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Slingshot</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #00f0ff; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(0, 240, 255, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #00f0ff; color: black; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+        
+        /* Aiming Line Overlay */
+        #aim-layer {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #00f0ff; margin-bottom: 10px;">Neon Slingshot</h2>
+        <p style="color: #888899; line-height: 1.5;">Swipe anywhere on the screen. <br><br>A <b>fast flick</b> shoots a high-speed piercing triangle. <br>A <b>slow swipe</b> spawns a heavy bouncing square.</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <canvas id="aim-layer"></canvas>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Setup Game Canvas (Draws particles)
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Setup Aiming Canvas (Draws the swipe line)
+        const aimCanvas = document.getElementById('aim-layer');
+        const aimCtx = aimCanvas.getContext('2d');
+
+        function resize() {
+            canvas.width = aimCanvas.width = window.innerWidth;
+            canvas.height = aimCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // UI Logic
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Game State
+        let particles = [];
+        let startX, startY, currentX, currentY, startTime;
+        let isSwiping = false;
+
+        // Input Handling
+        canvas.addEventListener('pointerdown', (e) => {
+            isSwiping = true;
+            startX = currentX = e.clientX;
+            startY = currentY = e.clientY;
+            startTime = Date.now();
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (!isSwiping) return;
+            currentX = e.clientX;
+            currentY = e.clientY;
+        });
+
+        canvas.addEventListener('pointerup', (e) => {
+            if (!isSwiping) return;
+            isSwiping = false;
+            
+            aimCtx.clearRect(0, 0, aimCanvas.width, aimCanvas.height); // Clear aiming line
+
+            let dx = currentX - startX;
+            let dy = currentY - startY;
+            let time = Date.now() - startTime;
+            let distance = Math.hypot(dx, dy);
+            
+            // Prevent spawning on accidental taps
+            if(distance > 20) {
+                let velocity = distance / time; // pixels per ms
+                
+                particles.push({
+                    x: startX, 
+                    y: startY,
+                    vx: dx * 0.05, // Scale down visual speed
+                    vy: dy * 0.05,
+                    speed: velocity,
+                    life: 255,
+                    rotation: Math.atan2(dy, dx) // Point in direction of travel
+                });
+            }
+        });
+
+        function loop() {
+            // Draw aiming line if currently swiping
+            if (isSwiping) {
+                aimCtx.clearRect(0, 0, aimCanvas.width, aimCanvas.height);
+                aimCtx.beginPath();
+                aimCtx.moveTo(startX, startY);
+                aimCtx.lineTo(currentX, currentY);
+                aimCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+                aimCtx.lineWidth = 4;
+                aimCtx.lineCap = 'round';
+                aimCtx.stroke();
+            }
+
+            // Dark trailing effect for the background
+            ctx.fillStyle = 'rgba(15, 15, 19, 0.2)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Update and draw particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 1.5; // Fade out rate
+
+                // Bounce off walls with slight energy loss
+                if(p.x < 0 || p.x > canvas.width) { p.vx *= -0.9; p.x = p.x < 0 ? 0 : canvas.width; }
+                if(p.y < 0 || p.y > canvas.height) { p.vy *= -0.9; p.y = p.y < 0 ? 0 : canvas.height; }
+
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.rotation);
+
+                ctx.beginPath();
+                if (p.speed > 1.2) {
+                    // Fast flick = High-speed Triangle
+                    ctx.moveTo(15, 0);
+                    ctx.lineTo(-10, 10);
+                    ctx.lineTo(-10, -10);
+                    ctx.fillStyle = `rgba(0, 240, 255, ${p.life/255})`;
+                    ctx.shadowColor = '#00f0ff';
+                } else {
+                    // Slow swipe = Heavy Square
+                    ctx.rect(-12, -12, 24, 24);
+                    ctx.fillStyle = `rgba(255, 0, 60, ${p.life/255})`;
+                    ctx.shadowColor = '#ff003c';
+                }
+                
+                ctx.shadowBlur = 15;
+                ctx.fill();
+                ctx.restore();
+
+                // Remove dead particles
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        // Start animation loop
+        loop();
+    </script>
+</body>
+</html>
