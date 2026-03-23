@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Constellation</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050508; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(5, 5, 8, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #0088ff; color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #0088ff; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(0, 136, 255, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #0088ff; color: white; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+
+        /* Compass HUD */
+        #compass-hud {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            font-size: 1.2rem; color: rgba(255, 255, 255, 0.3); font-weight: 300;
+            letter-spacing: 5px; pointer-events: none; z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #0088ff; margin-bottom: 10px;">Constellation</h2>
+        <p style="color: #888899; line-height: 1.5;">You are surrounded by darkness. You cannot swipe to look around.<br><br><b>Hold your phone up and physically turn your body 360 degrees.</b> As you face specific compass directions, hidden geometric constellations will reveal themselves.</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Compass Sensor Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game tracks your physical rotation in the real world.</p>
+        <button id="start-btn">Enable Compass & Start</button>
+    </div>
+
+    <div id="compass-hud"><span id="heading-text">000</span>°</div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const headingText = document.getElementById('heading-text');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Game State
+        let currentAlpha = 0; // Device compass heading (0-360)
+        let smoothedAlpha = 0;
+        let ambientStars = [];
+
+        // Generate Background Stars
+        for (let i = 0; i < 150; i++) {
+            ambientStars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 1.5 + 0.5,
+                opacity: Math.random(),
+                blinkSpeed: (Math.random() * 0.02) + 0.005
+            });
+        }
+
+        // Define Hidden Constellations at specific compass headings
+        const constellations = [
+            { heading: 45,  name: "The Prism", color: "#00f0ff", points: [[0,-100], [80,50], [-80,50], [0,0]], connections: [[0,1], [1,2], [2,0], [0,3], [1,3], [2,3]] },
+            { heading: 135, name: "The Hourglass", color: "#ff007f", points: [[-60,-80], [60,-80], [0,0], [-60,80], [60,80]], connections: [[0,1], [1,2], [2,0], [2,3], [3,4], [4,2]] },
+            { heading: 225, name: "The Diamond", color: "#a200ff", points: [[0,-120], [60,0], [0,120], [-60,0]], connections: [[0,1], [1,2], [2,3], [3,0], [0,2], [1,3]] },
+            { heading: 315, name: "The Crown", color: "#ffe600", points: [[-80,40], [-40,-60], [0,20], [40,-60], [80,40]], connections: [[0,1], [1,2], [2,3], [3,4], [4,0]] }
+        ];
+
+        // Start Sensors
+        document.getElementById('start-btn').addEventListener('click', () => {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                            startGame();
+                        } else {
+                            alert("Permission denied. The compass will not work.");
+                            startGame(); // Fallback to play with dragging if needed later
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation);
+                startGame();
+            }
+        });
+
+        function startGame() {
+            document.getElementById('start-overlay').style.display = 'none';
+            loop();
+        }
+
+        function handleOrientation(e) {
+            if (e.alpha !== null) {
+                // Invert alpha so turning right increases the number, mapping correctly to a compass
+                currentAlpha = 360 - e.alpha; 
+            }
+        }
+
+        // Calculate shortest angular distance (accounting for 360 wraparound)
+        function getAngularDistance(target, current) {
+            let diff = Math.abs(target - current) % 360;
+            return diff > 180 ? 360 - diff : diff;
+        }
+
+        function loop() {
+            // Smooth out the compass reading to prevent jittering
+            let diff = currentAlpha - smoothedAlpha;
+            if (diff > 180) diff -= 360;
+            else if (diff < -180) diff += 360;
+            smoothedAlpha = (smoothedAlpha + diff * 0.1 + 360) % 360;
+
+            // Update HUD
+            headingText.innerText = Math.floor(smoothedAlpha).toString().padStart(3, '0');
+
+            // Clear Background
+            ctx.fillStyle = '#050508';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Ambient Stars
+            ctx.fillStyle = '#ffffff';
+            ambientStars.forEach(star => {
+                star.opacity += star.blinkSpeed;
+                if (star.opacity >= 1 || star.opacity <= 0.1) star.blinkSpeed *= -1; // Reverse fading
+                
+                ctx.globalAlpha = star.opacity;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0; // Reset
+
+            // Check and Draw Constellations
+            constellations.forEach(c => {
+                let distance = getAngularDistance(c.heading, smoothedAlpha);
+                const visibilityWindow = 35; // degrees
+
+                if (distance < visibilityWindow) {
+                    // Map distance (0 to 35) to opacity (1 to 0)
+                    let opacity = 1 - (distance / visibilityWindow);
+                    
+                    // Parallax shift based on how far off center it is
+                    let shiftX = ((smoothedAlpha - c.heading) % 360);
+                    if (shiftX > 180) shiftX -= 360;
+                    else if (shiftX < -180) shiftX += 360;
+                    
+                    let centerX = (canvas.width / 2) - (shiftX * 15); // Move horizontally
+                    let centerY = canvas.height / 2;
+
+                    ctx.save();
+                    ctx.translate(centerX, centerY);
+
+                    // Draw Connections
+                    ctx.strokeStyle = c.color;
+                    ctx.lineWidth = 1.5;
+                    ctx.globalAlpha = opacity * 0.6;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = c.color;
+                    
+                    ctx.beginPath();
+                    c.connections.forEach(conn => {
+                        let p1 = c.points[conn[0]];
+                        let p2 = c.points[conn[1]];
+                        ctx.moveTo(p1[0], p1[1]);
+                        ctx.lineTo(p2[0], p2[1]);
+                    });
+                    ctx.stroke();
+
+                    // Draw Stars (Nodes)
+                    ctx.fillStyle = '#fff';
+                    ctx.globalAlpha = opacity;
+                    c.points.forEach(p => {
+                        ctx.beginPath();
+                        ctx.arc(p[0], p[1], 4, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Outer glow for the star
+                        ctx.beginPath();
+                        ctx.arc(p[0], p[1], 8, 0, Math.PI * 2);
+                        ctx.fillStyle = c.color;
+                        ctx.globalAlpha = opacity * 0.5;
+                        ctx.fill();
+                        ctx.globalAlpha = opacity;
+                    });
+
+                    // Draw Title
+                    ctx.fillStyle = c.color;
+                    ctx.font = "300 1.2rem 'Segoe UI', sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.letterSpacing = "5px";
+                    ctx.globalAlpha = opacity;
+                    ctx.fillText(c.name.toUpperCase(), 0, 160);
+
+                    ctx.restore();
+                    ctx.shadowBlur = 0; // Reset
+                }
+            });
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
