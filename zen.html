@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Kinetic Zen</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #00ffaa; color: black;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #00ffaa; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(0, 255, 170, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #00ffaa; color: black; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+
+        /* HUD */
+        #hud {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            text-align: center; pointer-events: none; z-index: 10;
+            background: rgba(28, 28, 36, 0.8); padding: 10px 20px; border-radius: 20px;
+            border: 1px solid rgba(0, 255, 170, 0.3);
+        }
+        #speed-display { font-size: 1.5rem; font-weight: bold; color: #00ffaa; }
+        #status-display { font-size: 0.8rem; color: #888899; text-transform: uppercase; margin-top: 5px; letter-spacing: 1px;}
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #00ffaa; margin-bottom: 10px;">Kinetic Zen</h2>
+        <p style="color: #888899; line-height: 1.5;">Draw in the digital sand to relax your mind.<br><br>There is no erase button. The sand will only reset and smooth itself out when you are in physical motion. <b>Go for a walk, a run, or a drive to clear the canvas.</b></p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Location Access Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game uses GPS to calculate your physical speed.</p>
+        <button id="start-btn">Enable Location & Start</button>
+    </div>
+
+    <div id="hud">
+        <div id="speed-display">0.0 km/h</div>
+        <div id="status-display">Resting</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const speedDisplay = document.getElementById('speed-display');
+        const statusDisplay = document.getElementById('status-display');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Initial background fill
+            ctx.fillStyle = '#0f0f13';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Game State
+        let isDrawing = false;
+        let lastX = 0, lastY = 0;
+        let currentSpeed = 0; // in km/h
+        let geoWatchId = null;
+
+        // Geolocation Setup
+        document.getElementById('start-btn').addEventListener('click', () => {
+            if ("geolocation" in navigator) {
+                geoWatchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        // speed is in meters per second, convert to km/h
+                        let speedMps = position.coords.speed || 0;
+                        currentSpeed = speedMps * 3.6;
+                        
+                        // Update UI
+                        speedDisplay.innerText = currentSpeed.toFixed(1) + ' km/h';
+                        
+                        if (currentSpeed > 2) {
+                            statusDisplay.innerText = "Clearing Sand...";
+                            statusDisplay.style.color = "#00ffaa";
+                        } else {
+                            statusDisplay.innerText = "Resting";
+                            statusDisplay.style.color = "#888899";
+                        }
+                        
+                        document.getElementById('start-overlay').style.display = 'none';
+                    },
+                    (error) => {
+                        console.error(error);
+                        alert("Could not access location. The sand will not clear automatically.");
+                        document.getElementById('start-overlay').style.display = 'none';
+                    },
+                    { enableHighAccuracy: true, maximumAge: 0 }
+                );
+            } else {
+                alert("Geolocation is not supported by this browser.");
+                document.getElementById('start-overlay').style.display = 'none';
+            }
+            loop();
+        });
+
+        // Drawing Mechanics (Raking the sand)
+        canvas.addEventListener('pointerdown', (e) => {
+            isDrawing = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (!isDrawing) return;
+            
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(e.clientX, e.clientY);
+            
+            // "Raked sand" styling
+            ctx.strokeStyle = 'rgba(0, 255, 170, 0.4)';
+            ctx.lineWidth = 8;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = 'rgba(0, 255, 170, 0.2)';
+            ctx.stroke();
+
+            // Inner bright line
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 0;
+            ctx.stroke();
+
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+
+        canvas.addEventListener('pointerup', () => isDrawing = false);
+        canvas.addEventListener('pointerout', () => isDrawing = false);
+
+        // Render Loop for Fading
+        function loop() {
+            // If the user is moving faster than 2 km/h (walking pace)
+            if (currentSpeed > 2) {
+                // Apply a very slight dark overlay to gradually fade the drawing
+                // The faster you go, the faster it clears
+                let fadeAmount = Math.min(0.1, currentSpeed * 0.005);
+                ctx.fillStyle = `rgba(15, 15, 19, ${fadeAmount})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
