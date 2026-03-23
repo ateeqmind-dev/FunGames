@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Vocal EQ</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #a200ff; color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #a200ff; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(162, 0, 255, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #a200ff; color: white; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+
+        /* Score HUD */
+        #score-hud {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            font-size: 1.5rem; font-weight: bold; color: #a200ff; text-shadow: 0 0 10px #a200ff;
+            pointer-events: none; z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #a200ff; margin-bottom: 10px;">Vocal EQ</h2>
+        <p style="color: #888899; line-height: 1.5;">Use your voice to manipulate the equalizer bars.<br><br><b>Hum low</b> to raise the left bars. <b>Whistle or shush</b> to raise the right bars. Try to match the shape of the glowing pink target line!</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Microphone Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game analyzes the frequency of your voice.</p>
+        <button id="start-btn">Enable Mic & Start</button>
+    </div>
+
+    <div id="score-hud">MATCHED: <span id="score">0</span></div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Audio State
+        let audioContext, analyser, microphone, dataArray;
+        const numBars = 32; // Simplified EQ resolution for the game
+        
+        // Game State
+        let targetLevels = new Array(numBars).fill(0);
+        let score = 0;
+        let holdTime = 0; // How long player has matched the shape
+
+        // Generate a new random target curve
+        function generateTarget() {
+            let peakIndex = Math.floor(Math.random() * numBars);
+            let width = 4 + Math.random() * 6; // How wide the peak is
+            
+            for (let i = 0; i < numBars; i++) {
+                // Create a bell-curve like shape around the peak
+                let distance = Math.abs(i - peakIndex);
+                if (distance < width) {
+                    targetLevels[i] = 150 + Math.random() * 100 * (1 - distance / width);
+                } else {
+                    targetLevels[i] = 20 + Math.random() * 40; // Background noise level
+                }
+            }
+        }
+
+        generateTarget();
+
+        // Start Mic
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 128; // Smaller FFT size means fewer, wider frequency bins (easier to hit)
+                analyser.smoothingTimeConstant = 0.8; // Smooth out the mic input
+                
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
+                document.getElementById('start-overlay').style.display = 'none';
+                loop();
+            } catch (err) {
+                alert("Microphone access denied or not available.");
+            }
+        });
+
+        function loop() {
+            analyser.getByteFrequencyData(dataArray);
+
+            ctx.fillStyle = '#0f0f13';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            let barWidth = (canvas.width / numBars) - 2;
+            let matchScore = 0;
+            let totalPossible = numBars * 255; // Max difference
+
+            for (let i = 0; i < numBars; i++) {
+                // We map the 64 data array bins to our 32 visible bars
+                let value = dataArray[i]; 
+                
+                let x = i * (barWidth + 2);
+                let y = canvas.height - value;
+                let targetY = canvas.height - targetLevels[i];
+
+                // Calculate how close the player is to the target
+                let diff = Math.abs(value - targetLevels[i]);
+                matchScore += diff;
+
+                // Draw Target Outline
+                ctx.beginPath();
+                ctx.rect(x, targetY, barWidth, targetLevels[i]);
+                ctx.strokeStyle = 'rgba(255, 0, 127, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Draw Player Input EQ Bar
+                ctx.fillStyle = diff < 40 ? '#00f0ff' : '#a200ff'; // Turns cyan if close to target
+                ctx.shadowBlur = diff < 40 ? 15 : 0;
+                ctx.shadowColor = '#00f0ff';
+                ctx.fillRect(x, y, barWidth, value);
+                ctx.shadowBlur = 0; // reset
+            }
+
+            // Check if player matches the shape (lower difference = better match)
+            if (matchScore < (totalPossible * 0.15)) { // 85% accuracy required
+                holdTime++;
+                if (holdTime > 30) { // Hold for half a second
+                    score++;
+                    scoreDisplay.innerText = score;
+                    generateTarget(); // Next level
+                    holdTime = 0;
+                    
+                    // Flash screen green on success
+                    ctx.fillStyle = 'rgba(0, 255, 136, 0.3)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+            } else {
+                holdTime = Math.max(0, holdTime - 2); // Lose progress if you drop pitch
+            }
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
