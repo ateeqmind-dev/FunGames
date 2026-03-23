@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Whisper Bubbles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: sans-serif; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #00f0ff; color: black;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #00f0ff; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; display: none; z-index: 40; color: white;
+        }
+        .close-modal { background: #00f0ff; color: black; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin-top: 15px;}
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #00f0ff; margin-bottom: 10px;">Whisper Bubbles</h2>
+        <p style="color: #888899; line-height: 1.5;">Tap the bubbles to pop them. However, if the room gets too loud, the bubbles will panic and shrink! You must be completely quiet to clear the screen.</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Microphone Access Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game listens to ambient room noise.</p>
+        <button id="start-btn">Allow Mic & Start</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // UI Logic
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Game State
+        let bubbles = [];
+        let micVolume = 0;
+        let audioContext, analyser, microphone, dataArray;
+
+        // Generate initial bubbles
+        for(let i = 0; i < 20; i++) {
+            bubbles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                radius: Math.random() * 30 + 20,
+                baseRadius: Math.random() * 30 + 20,
+                vx: (Math.random() - 0.5) * 2,
+                vy: (Math.random() - 0.5) * 2
+            });
+        }
+
+        // Initialize Microphone
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                analyser.fftSize = 256;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
+                document.getElementById('start-overlay').style.display = 'none';
+                loop(); // Start game loop
+            } catch (err) {
+                alert("Microphone access denied or not available.");
+            }
+        });
+
+        // Touch to pop
+        canvas.addEventListener('pointerdown', (e) => {
+            if(micVolume > 30) return; // Too loud to pop!
+            
+            for(let i = bubbles.length - 1; i >= 0; i--) {
+                let b = bubbles[i];
+                let dist = Math.hypot(e.clientX - b.x, e.clientY - b.y);
+                if(dist < b.radius) {
+                    bubbles.splice(i, 1); // Pop bubble
+                    break;
+                }
+            }
+        });
+
+        function loop() {
+            // Get Mic Volume
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for(let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+            micVolume = sum / dataArray.length; // Average volume (0 to 255)
+
+            // Clear Screen
+            ctx.fillStyle = '#0f0f13';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw and update bubbles
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 2;
+
+            bubbles.forEach(b => {
+                b.x += b.vx;
+                b.y += b.vy;
+
+                // Bounce off walls
+                if(b.x < 0 || b.x > canvas.width) b.vx *= -1;
+                if(b.y < 0 || b.y > canvas.height) b.vy *= -1;
+
+                // Shrink if loud, grow if quiet
+                if (micVolume > 20) {
+                    b.radius = Math.max(5, b.radius - 2); // Panic shrink
+                    ctx.strokeStyle = '#ff003c'; // Turn red when scared
+                } else {
+                    b.radius = Math.min(b.baseRadius, b.radius + 0.5); // Relax grow
+                    ctx.strokeStyle = '#00f0ff'; // Normal blue
+                }
+
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.stroke();
+            });
+
+            // Add new bubbles slowly if empty
+            if(bubbles.length < 5 && Math.random() < 0.02) {
+                bubbles.push({
+                    x: Math.random() * canvas.width, y: canvas.height + 50,
+                    radius: 30, baseRadius: 30,
+                    vx: (Math.random() - 0.5) * 2, vy: -2
+                });
+            }
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
