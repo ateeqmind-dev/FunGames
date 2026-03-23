@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Fluid Sandbox</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #ff007f; color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #ff007f; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(255, 0, 127, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #ff007f; color: white; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #ff007f; margin-bottom: 10px;">Fluid Sandbox</h2>
+        <p style="color: #888899; line-height: 1.5;">Tilt your phone to change the direction of gravity and watch the neon fluid flow.<br><br>Draw on the screen with your finger to create solid barriers for the fluid to pool around.</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Motion Sensor Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game uses your device's gyroscope to simulate gravity.</p>
+        <button id="start-btn">Enable Tilt & Start</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Physics State
+        let particles = [];
+        let barriers = []; // Drawn obstacles
+        let gravityX = 0;
+        let gravityY = 0.5; // Default downward gravity
+        const numParticles = 300;
+
+        // Colors
+        const colors = ['#00f0ff', '#ff007f', '#a200ff'];
+
+        // Init Particles
+        for (let i = 0; i < numParticles; i++) {
+            particles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                vx: 0,
+                vy: 0,
+                radius: 3 + Math.random() * 2,
+                color: colors[Math.floor(Math.random() * colors.length)]
+            });
+        }
+
+        // Handle Sensor Permission and Initialization
+        document.getElementById('start-btn').addEventListener('click', () => {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                // iOS 13+ requires explicit permission
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                            startGame();
+                        } else {
+                            alert("Permission denied. The game needs motion access to work.");
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                // Non iOS 13+ devices
+                window.addEventListener('deviceorientation', handleOrientation);
+                startGame();
+            }
+        });
+
+        function handleOrientation(e) {
+            // Gamma is left-to-right tilt in degrees, where right is positive
+            // Beta is front-to-back tilt in degrees, where front is positive
+            let tiltX = e.gamma; 
+            let tiltY = e.beta; 
+
+            // Clamp values
+            if (tiltX > 90) tiltX = 90;
+            if (tiltX < -90) tiltX = -90;
+            
+            // Adjust sensitivity and convert to gravity vector
+            gravityX = (tiltX / 90) * 0.8;
+            gravityY = (tiltY / 90) * 0.8;
+        }
+
+        function startGame() {
+            document.getElementById('start-overlay').style.display = 'none';
+            loop();
+        }
+
+        // Draw Barriers
+        canvas.addEventListener('pointermove', (e) => {
+            if (e.buttons > 0) {
+                barriers.push({ x: e.clientX, y: e.clientY, radius: 15 });
+                // Keep memory from overloading by limiting barriers
+                if (barriers.length > 200) barriers.shift(); 
+            }
+        });
+
+        function loop() {
+            // Draw background with slight trail effect
+            ctx.fillStyle = 'rgba(15, 15, 19, 0.4)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Barriers
+            ctx.fillStyle = '#333344';
+            barriers.forEach(b => {
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Update & Draw Particles
+            for (let i = 0; i < numParticles; i++) {
+                let p = particles[i];
+
+                // Apply Gravity
+                p.vx += gravityX;
+                p.vy += gravityY;
+
+                // Add some friction/damping so they don't accelerate infinitely
+                p.vx *= 0.98;
+                p.vy *= 0.98;
+
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Wall Collisions
+                if (p.x < p.radius) { p.x = p.radius; p.vx *= -0.5; }
+                if (p.x > canvas.width - p.radius) { p.x = canvas.width - p.radius; p.vx *= -0.5; }
+                if (p.y < p.radius) { p.y = p.radius; p.vy *= -0.5; }
+                if (p.y > canvas.height - p.radius) { p.y = canvas.height - p.radius; p.vy *= -0.5; }
+
+                // Barrier Collisions
+                for (let j = 0; j < barriers.length; j++) {
+                    let b = barriers[j];
+                    let dx = p.x - b.x;
+                    let dy = p.y - b.y;
+                    let distance = Math.hypot(dx, dy);
+                    let minDist = p.radius + b.radius;
+
+                    if (distance < minDist) {
+                        // Push particle out of the barrier
+                        let angle = Math.atan2(dy, dx);
+                        let targetX = b.x + Math.cos(angle) * minDist;
+                        let targetY = b.y + Math.sin(angle) * minDist;
+                        
+                        p.vx += (targetX - p.x) * 0.1;
+                        p.vy += (targetY - p.y) * 0.1;
+                    }
+                }
+
+                // Draw Particle
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = p.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = p.color;
+                ctx.fill();
+                ctx.shadowBlur = 0; // Reset shadow for performance
+            }
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
