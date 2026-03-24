@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scream Balloon</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #ff3366; color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #ff3366; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(255, 51, 102, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #ff3366; color: white; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #ff3366; margin-bottom: 10px;">Scream Balloon</h2>
+        <p style="color: #888899; line-height: 1.5;">Make noise into your microphone to inflate the neon balloon until it pops!<br><br><b>The Twist:</b> If you yell too suddenly, the balloon gets scared and deflates. You must increase your volume smoothly and steadily.</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Microphone Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game analyzes the volume and suddenness of your voice.</p>
+        <button id="start-btn">Enable Mic & Start</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            balloon.x = canvas.width / 2;
+            balloon.y = canvas.height / 2;
+        }
+        window.addEventListener('resize', resize);
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Audio State
+        let audioContext, analyser, microphone, dataArray;
+        let currentVolume = 0;
+        let lastVolume = 0;
+
+        // Game State
+        let balloon = {
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+            radius: 50,
+            baseRadius: 50,
+            maxRadius: Math.min(window.innerWidth, window.innerHeight) * 0.4,
+            isScared: false,
+            scaredTimer: 0
+        };
+        
+        let particles = []; // For the explosion
+
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                // Less smoothing so we can catch sudden spikes easily
+                analyser.smoothingTimeConstant = 0.5; 
+                
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
+                resize();
+                document.getElementById('start-overlay').style.display = 'none';
+                loop();
+            } catch (err) {
+                alert("Microphone access denied. You cannot inflate the balloon.");
+            }
+        });
+
+        function popBalloon() {
+            // Generate confetti
+            for (let i = 0; i < 150; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let speed = Math.random() * 15 + 5;
+                particles.push({
+                    x: balloon.x,
+                    y: balloon.y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: Math.random() * 4 + 2,
+                    color: `hsl(${Math.random() * 60 + 330}, 100%, 60%)`, // Pinks, reds, purples
+                    life: 255
+                });
+            }
+            // Reset balloon
+            balloon.radius = balloon.baseRadius;
+        }
+
+        function loop() {
+            ctx.fillStyle = '#0f0f13';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Audio Processing
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+            
+            lastVolume = currentVolume;
+            currentVolume = sum / dataArray.length;
+
+            // Logic: Did the user yell too suddenly? (Volume spike)
+            let volumeSpike = currentVolume - lastVolume;
+            
+            if (volumeSpike > 15) { 
+                balloon.isScared = true;
+                balloon.scaredTimer = 30; // Stays scared for ~half a second
+            }
+
+            // Logic: Inflate or Deflate
+            if (balloon.scaredTimer > 0) {
+                // Scared: rapid deflation and jitter
+                balloon.scaredTimer--;
+                balloon.radius = Math.max(balloon.baseRadius, balloon.radius - 8);
+                
+                // Add jitter
+                balloon.x = (canvas.width / 2) + (Math.random() - 0.5) * 20;
+                balloon.y = (canvas.height / 2) + (Math.random() - 0.5) * 20;
+            } else {
+                balloon.isScared = false;
+                // Center the balloon
+                balloon.x += ((canvas.width / 2) - balloon.x) * 0.1;
+                balloon.y += ((canvas.height / 2) - balloon.y) * 0.1;
+
+                if (currentVolume > 10) {
+                    // Steady inflation based on volume
+                    balloon.radius += (currentVolume * 0.05);
+                } else {
+                    // Slow leak if quiet
+                    balloon.radius = Math.max(balloon.baseRadius, balloon.radius - 0.5);
+                }
+            }
+
+            // Pop condition
+            if (balloon.radius >= balloon.maxRadius) {
+                popBalloon();
+            }
+
+            // Draw Particles (Confetti)
+            if (particles.length > 0) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    let p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.5; // Gravity
+                    p.life -= 3;
+
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fillStyle = p.color;
+                    ctx.globalAlpha = p.life / 255;
+                    ctx.fill();
+
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+                ctx.globalAlpha = 1.0; // Reset
+            }
+
+            // Draw Balloon
+            if (balloon.radius > balloon.baseRadius || particles.length === 0) {
+                ctx.beginPath();
+                ctx.arc(balloon.x, balloon.y, balloon.radius, 0, Math.PI * 2);
+
+                // Style changes based on state
+                if (balloon.isScared) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; // Flashes white when scared
+                    ctx.shadowColor = '#ffffff';
+                } else {
+                    // Gradient fill based on how close it is to popping
+                    let tension = (balloon.radius - balloon.baseRadius) / (balloon.maxRadius - balloon.baseRadius);
+                    let hue = 340 + (tension * 40); // Shifts from pink to intense orange/red
+                    
+                    let gradient = ctx.createRadialGradient(
+                        balloon.x - balloon.radius * 0.3, balloon.y - balloon.radius * 0.3, balloon.radius * 0.1, 
+                        balloon.x, balloon.y, balloon.radius
+                    );
+                    gradient.addColorStop(0, '#ffffff');
+                    gradient.addColorStop(0.2, `hsl(${hue}, 100%, 70%)`);
+                    gradient.addColorStop(1, `hsl(${hue}, 100%, 40%)`);
+                    
+                    ctx.fillStyle = gradient;
+                    ctx.shadowColor = `hsl(${hue}, 100%, 50%)`;
+                }
+
+                ctx.shadowBlur = 30;
+                ctx.fill();
+                ctx.shadowBlur = 0; // Reset
+
+                // Draw String
+                ctx.beginPath();
+                ctx.moveTo(balloon.x, balloon.y + balloon.radius);
+                ctx.bezierCurveTo(
+                    balloon.x - 20, balloon.y + balloon.radius + 50,
+                    balloon.x + 20, balloon.y + balloon.radius + 100,
+                    balloon.x, balloon.y + balloon.radius + 150
+                );
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
