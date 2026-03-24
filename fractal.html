@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Micro Fractal</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI Buttons */
+        .btn {
+            position: absolute; top: 20px; width: 40px; height: 40px;
+            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; font-size: 1.2rem; display: flex; justify-content: center;
+            align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
+        }
+        #btn-info { left: 20px; }
+        #btn-back { right: 20px; }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #ffffff; color: black;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+        }
+
+        /* Info Modal */
+        #info-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1c1c24; border: 1px solid #ffffff; padding: 30px; border-radius: 16px;
+            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.2); display: none;
+        }
+        .close-modal { 
+            background: #ffffff; color: black; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+        }
+
+        /* Static Overlay for when out of sync */
+        #static-overlay {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            opacity: 0; pointer-events: none; z-index: 10;
+            mix-blend-mode: screen;
+        }
+    </style>
+</head>
+<body>
+
+    <button class="btn" id="btn-info">ℹ️</button>
+    <a href="index.html" class="btn" id="btn-back">✖</a>
+
+    <div id="info-modal">
+        <h2 style="color: #ffffff; margin-bottom: 10px;">Micro Fractal</h2>
+        <p style="color: #888899; line-height: 1.5;">Use two fingers to <b>pinch and zoom</b> infinitely deep into the geometry.<br><br><b>The Twist:</b> The fractal is rotating. You must physically tilt/steer your phone like a steering wheel to match its rotation. If you fall out of sync, the signal is lost to static!</p>
+        <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Motion Sensors Required</h2>
+        <p style="color: #888899; margin-top: 10px;">This game tracks the tilt of your device to maintain focus.</p>
+        <button id="start-btn">Enable Tilt & Start</button>
+    </div>
+
+    <div id="static-overlay"></div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const staticOverlay = document.getElementById('static-overlay');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+
+        // Game & Math State
+        let baseZoom = 1;
+        let globalZoom = 1;
+        let fractalAngle = 0;   // The internal rotation of the geometry
+        let deviceAngle = 0;    // The user's physical steering rotation
+        let syncError = 0;      // Difference between the two
+        let time = 0;
+
+        // Pinch-to-Zoom State
+        let activePointers = new Map();
+        let initialPinchDistance = null;
+
+        // --- Sensor Setup ---
+        document.getElementById('start-btn').addEventListener('click', () => {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                            startGame();
+                        } else {
+                            alert("Permission denied. Auto-syncing instead.");
+                            startGame();
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation);
+                startGame();
+            }
+        });
+
+        function startGame() {
+            document.getElementById('start-overlay').style.display = 'none';
+            loop();
+        }
+
+        function handleOrientation(e) {
+            // Gamma acts like a steering wheel when holding the phone upright
+            let tilt = e.gamma || 0; 
+            
+            // Clamp between -90 and 90
+            if (tilt > 90) tilt = 90;
+            if (tilt < -90) tilt = -90;
+
+            // Convert tilt to a workable angle (in radians) to compare with the fractal
+            deviceAngle = (tilt / 90) * Math.PI; 
+        }
+
+        // --- Multi-Touch / Pinch Logic ---
+        canvas.addEventListener('pointerdown', (e) => {
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (activePointers.has(e.pointerId)) {
+                activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+                // If 2 fingers are touching, calculate pinch zoom
+                if (activePointers.size === 2) {
+                    let pointers = Array.from(activePointers.values());
+                    let dist = Math.hypot(pointers[0].x - pointers[1].x, pointers[0].y - pointers[1].y);
+                    
+                    if (initialPinchDistance === null) {
+                        initialPinchDistance = dist;
+                    } else {
+                        let scaleDelta = dist / initialPinchDistance;
+                        globalZoom *= scaleDelta;
+                        // To simulate infinite zoom, wrap the scale back around once it doubles
+                        if (globalZoom > 2) globalZoom = 1; 
+                        if (globalZoom < 0.5) globalZoom = 1;
+                        initialPinchDistance = dist;
+                    }
+                }
+            }
+        });
+
+        function handlePointerUp(e) {
+            activePointers.delete(e.pointerId);
+            if (activePointers.size < 2) {
+                initialPinchDistance = null; // Reset pinch anchor
+            }
+        }
+        canvas.addEventListener('pointerup', handlePointerUp);
+        canvas.addEventListener('pointercancel', handlePointerUp);
+        canvas.addEventListener('pointerout', handlePointerUp);
+
+
+        // --- Drawing Logic ---
+        function drawPolygon(x, y, radius, sides, rotation, color, lineWidth) {
+            ctx.beginPath();
+            for (let i = 0; i < sides; i++) {
+                let angle = rotation + (i * 2 * Math.PI / sides);
+                let px = x + radius * Math.cos(angle);
+                let py = y + radius * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
+
+        function loop() {
+            time += 0.01;
+            
+            // Fractal rotates back and forth smoothly over time
+            fractalAngle = Math.sin(time * 0.5) * (Math.PI / 2);
+
+            // Calculate how far out of sync the user's hands are from the fractal's rotation
+            // If they didn't grant permission, deviceAngle stays 0, so we just use a fallback math
+            let angleDiff = Math.abs(fractalAngle - deviceAngle);
+            syncError = Math.min(1, angleDiff / 0.8); // 0 = perfectly synced, 1 = total static
+
+            // Apply visual static/blur based on sync error
+            staticOverlay.style.opacity = syncError * 0.8;
+            ctx.filter = `blur(${syncError * 15}px)`;
+
+            // Clear Background
+            ctx.fillStyle = '#0f0f13';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            let centerX = canvas.width / 2;
+            let centerY = canvas.height / 2;
+
+            // Draw the infinite zooming layers
+            const numLayers = 12;
+            const baseRadius = Math.max(canvas.width, canvas.height) * 0.1;
+
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            
+            // Apply user's steering to counteract the fractal's rotation visually
+            ctx.rotate(deviceAngle); 
+
+            for (let i = 0; i < numLayers; i++) {
+                // The magic of infinite zoom: spacing layers exponentially and scaling them all together
+                let layerScale = Math.pow(1.5, i) * globalZoom; 
+                let currentRadius = baseRadius * layerScale;
+
+                // Fade layers out as they get extremely large (close to camera) or extremely small (far away)
+                let opacity = 1;
+                if (i === 0) opacity = (globalZoom - 1); // Fade in the smallest layer
+                if (i === numLayers - 1) opacity = (2 - globalZoom); // Fade out the largest layer
+
+                // Shift colors through the spectrum based on depth and time
+                let hue = (time * 50 + i * 20) % 360;
+                let color = `hsla(${hue}, 100%, 60%, ${opacity})`;
+
+                // The geometry itself rotates internally
+                drawPolygon(0, 0, currentRadius, 6, fractalAngle * (i % 2 === 0 ? 1 : -1), color, 2 * layerScale);
+                
+                // Draw connecting structural lines for a complex "web" look
+                if (i < numLayers - 1) {
+                    ctx.beginPath();
+                    ctx.arc(0, 0, currentRadius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `hsla(${hue}, 100%, 60%, ${opacity * 0.1})`;
+                    ctx.lineWidth = 1 * layerScale;
+                    ctx.stroke();
+                }
+            }
+
+            ctx.restore();
+            ctx.filter = 'none'; // Reset filter for next frame
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
