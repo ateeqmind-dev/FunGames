@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Whisper Bubbles</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
         
         /* UI Buttons */
@@ -22,21 +22,36 @@
         /* Start Overlay */
         #start-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
-            justify-content: center; align-items: center; z-index: 30; color: white;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
         }
         #start-btn {
             padding: 15px 30px; font-size: 1.2rem; background: #00f0ff; color: black;
             border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
         }
 
-        /* Info Modal */
+        /* Info Modal & Settings */
         #info-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #1c1c24; border: 1px solid #00f0ff; padding: 30px; border-radius: 16px;
-            width: 80%; max-width: 400px; text-align: center; display: none; z-index: 40; color: white;
+            background: #1c1c24; border: 1px solid #00f0ff; padding: 25px; border-radius: 16px;
+            width: 85%; max-width: 400px; text-align: center; display: none; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(0, 240, 255, 0.2);
         }
-        .close-modal { background: #00f0ff; color: black; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin-top: 15px;}
+        
+        .settings-container {
+            background: rgba(0,0,0,0.3); padding: 15px; border-radius: 12px; margin: 15px 0;
+            text-align: left;
+        }
+        .setting-row { margin-bottom: 10px; }
+        .setting-row label { display: block; font-size: 0.9rem; color: #888899; margin-bottom: 5px; }
+        .setting-row input[type=range] {
+            width: 100%; accent-color: #00f0ff; background: #333; height: 6px; border-radius: 3px; outline: none;
+        }
+
+        .close-modal { 
+            background: #00f0ff; color: black; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%;
+        }
     </style>
 </head>
 <body>
@@ -46,14 +61,30 @@
 
     <div id="info-modal">
         <h2 style="color: #00f0ff; margin-bottom: 10px;">Whisper Bubbles</h2>
-        <p style="color: #888899; line-height: 1.5;">Tap the bubbles to pop them. However, if the room gets too loud, the bubbles will panic and shrink! You must be completely quiet to clear the screen.</p>
+        <p style="color: #888899; line-height: 1.4; font-size: 0.95rem;">
+            <b>Make noise</b> to spawn new bubbles from the bottom.<br>
+            <b>Shake or tilt</b> your phone to shrink them.<br>
+            Tap to pop them!
+        </p>
+
+        <div class="settings-container">
+            <div class="setting-row">
+                <label>Mic Sensitivity (Spawn Rate)</label>
+                <input type="range" id="mic-sens" min="1" max="100" value="50">
+            </div>
+            <div class="setting-row">
+                <label>Gyro Sensitivity (Shrink Rate)</label>
+                <input type="range" id="gyro-sens" min="1" max="100" value="50">
+            </div>
+        </div>
+
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
     </div>
 
     <div id="start-overlay">
-        <h2>Microphone Access Required</h2>
-        <p style="color: #888899; margin-top: 10px;">This game listens to ambient room noise.</p>
-        <button id="start-btn">Allow Mic & Start</button>
+        <h2>Sensors Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Needs microphone (to spawn bubbles) and motion (to shrink them).</p>
+        <button id="start-btn">Enable Sensors & Start</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -61,31 +92,50 @@
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        let animationId;
 
-        // UI Logic
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // UI Setup
         document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+        const micSensSlider = document.getElementById('mic-sens');
+        const gyroSensSlider = document.getElementById('gyro-sens');
 
         // Game State
         let bubbles = [];
-        let micVolume = 0;
+        let time = 0;
+        
+        // Sensor State
         let audioContext, analyser, microphone, dataArray;
+        let micVolume = 0;
+        let motionEnergy = 0;
+        let lastAcc = { x: 0, y: 0, z: 0 };
+        let lastTime = 0;
 
         // Generate initial bubbles
-        for(let i = 0; i < 20; i++) {
+        function spawnBubble(yPos = null) {
+            let radius = Math.random() * 25 + 20;
             bubbles.push({
                 x: Math.random() * canvas.width,
-                y: Math.random() * canvas.height,
-                radius: Math.random() * 30 + 20,
-                baseRadius: Math.random() * 30 + 20,
-                vx: (Math.random() - 0.5) * 2,
-                vy: (Math.random() - 0.5) * 2
+                y: yPos !== null ? yPos : Math.random() * canvas.height,
+                radius: radius,
+                baseRadius: radius,
+                vx: (Math.random() - 0.5) * 1,
+                vy: -Math.random() * 2 - 0.5, // Float upwards
+                wobbleOffset: Math.random() * Math.PI * 2
             });
         }
 
-        // Initialize Microphone
+        for(let i = 0; i < 15; i++) spawnBubble();
+
+        // Initialize Sensors
         document.getElementById('start-btn').addEventListener('click', async () => {
+            // 1. Microphone Request
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -94,75 +144,159 @@
                 microphone.connect(analyser);
                 analyser.fftSize = 256;
                 dataArray = new Uint8Array(analyser.frequencyBinCount);
-                
-                document.getElementById('start-overlay').style.display = 'none';
-                loop(); // Start game loop
             } catch (err) {
-                alert("Microphone access denied or not available.");
+                console.warn("Mic not available", err);
             }
+
+            // 2. Motion Request
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    let state = await DeviceMotionEvent.requestPermission();
+                    if (state === 'granted') window.addEventListener('devicemotion', handleMotion);
+                } catch(e) { console.warn(e); }
+            } else {
+                window.addEventListener('devicemotion', handleMotion);
+            }
+
+            document.getElementById('start-overlay').style.display = 'none';
+            loop(); // Start loop
         });
 
         // Touch to pop
         canvas.addEventListener('pointerdown', (e) => {
-            if(micVolume > 30) return; // Too loud to pop!
-            
             for(let i = bubbles.length - 1; i >= 0; i--) {
                 let b = bubbles[i];
                 let dist = Math.hypot(e.clientX - b.x, e.clientY - b.y);
                 if(dist < b.radius) {
-                    bubbles.splice(i, 1); // Pop bubble
+                    // Create tiny pop particles
+                    bubbles.splice(i, 1); 
                     break;
                 }
             }
         });
 
+        function handleMotion(e) {
+            let acc = e.accelerationIncludingGravity;
+            if (!acc || !acc.x) return;
+
+            let currentTime = Date.now();
+            if ((currentTime - lastTime) > 50) {
+                let diffTime = (currentTime - lastTime);
+                let deltaX = Math.abs(acc.x - lastAcc.x);
+                let deltaY = Math.abs(acc.y - lastAcc.y);
+                let deltaZ = Math.abs(acc.z - lastAcc.z);
+
+                // Calculate raw shake energy
+                motionEnergy = ((deltaX + deltaY + deltaZ) / diffTime) * 1000;
+                
+                lastAcc.x = acc.x; lastAcc.y = acc.y; lastAcc.z = acc.z;
+                lastTime = currentTime;
+            }
+        }
+
+        function drawRealisticBubble(ctx, b) {
+            ctx.save();
+            ctx.translate(b.x, b.y);
+            
+            // 3D Radial Gradient for gloss and reflection
+            let grad = ctx.createRadialGradient(
+                -b.radius * 0.3, -b.radius * 0.3, b.radius * 0.1,  // Highlight position
+                0, 0, b.radius                                     // Outer edge
+            );
+            
+            // Iridescent colors
+            grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');    // Crisp white specular highlight
+            grad.addColorStop(0.2, 'rgba(0, 240, 255, 0.15)');   // Cyan tint inside
+            grad.addColorStop(0.8, 'rgba(255, 0, 100, 0.05)');   // Pinkish inner reflection
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0.4)');    // Bright rim edge
+
+            ctx.beginPath();
+            ctx.arc(0, 0, b.radius, 0, Math.PI * 2);
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Crisp outer stroke
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Tiny secondary reflection at the bottom right
+            ctx.beginPath();
+            ctx.arc(b.radius * 0.4, b.radius * 0.4, b.radius * 0.15, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.fill();
+
+            ctx.restore();
+        }
+
         function loop() {
+            time += 0.05;
+            
+            // Get Sensitivity Multipliers (slider 50 = 1x multiplier)
+            let micMulti = micSensSlider.value / 50;
+            let gyroMulti = gyroSensSlider.value / 50;
+
             // Get Mic Volume
-            analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for(let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-            micVolume = sum / dataArray.length; // Average volume (0 to 255)
+            if (analyser) {
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for(let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+                micVolume = (sum / dataArray.length) * micMulti;
+            }
+
+            // Apply Motion damping so it smoothly transitions
+            motionEnergy *= 0.9;
 
             // Clear Screen
             ctx.fillStyle = '#0f0f13';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Draw and update bubbles
-            ctx.strokeStyle = '#00f0ff';
-            ctx.lineWidth = 2;
-
-            bubbles.forEach(b => {
-                b.x += b.vx;
-                b.y += b.vy;
-
-                // Bounce off walls
-                if(b.x < 0 || b.x > canvas.width) b.vx *= -1;
-                if(b.y < 0 || b.y > canvas.height) b.vy *= -1;
-
-                // Shrink if loud, grow if quiet
-                if (micVolume > 20) {
-                    b.radius = Math.max(5, b.radius - 2); // Panic shrink
-                    ctx.strokeStyle = '#ff003c'; // Turn red when scared
-                } else {
-                    b.radius = Math.min(b.baseRadius, b.radius + 0.5); // Relax grow
-                    ctx.strokeStyle = '#00f0ff'; // Normal blue
+            // Spawn logic based on volume
+            if (micVolume > 25 && bubbles.length < 50) {
+                // Throttle spawning so it doesn't flood instantly
+                if (Math.random() < (micVolume / 100)) {
+                    spawnBubble(canvas.height + 40); // Spawn below screen
                 }
-
-                ctx.beginPath();
-                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-                ctx.stroke();
-            });
-
-            // Add new bubbles slowly if empty
-            if(bubbles.length < 5 && Math.random() < 0.02) {
-                bubbles.push({
-                    x: Math.random() * canvas.width, y: canvas.height + 50,
-                    radius: 30, baseRadius: 30,
-                    vx: (Math.random() - 0.5) * 2, vy: -2
-                });
             }
 
-            requestAnimationFrame(loop);
+            // Draw and update bubbles
+            for(let i = bubbles.length - 1; i >= 0; i--) {
+                let b = bubbles[i];
+                
+                // Add wobble
+                b.x += b.vx + Math.sin(time + b.wobbleOffset) * 0.5;
+                b.y += b.vy;
+
+                // Screen wrapping/bouncing
+                if(b.x < -b.radius) b.x = canvas.width + b.radius;
+                if(b.x > canvas.width + b.radius) b.x = -b.radius;
+                
+                // Remove if it floats off the top
+                if(b.y < -b.radius - 20) {
+                    bubbles.splice(i, 1);
+                    continue;
+                }
+
+                // Shrink logic based on motion
+                let activeMotion = motionEnergy * gyroMulti;
+                if (activeMotion > 5) {
+                    b.radius -= (activeMotion * 0.05); // Shrink proportional to shake
+                } else {
+                    b.radius += 0.2; // Slowly grow back
+                }
+
+                // Clamp radius
+                b.radius = Math.max(5, Math.min(b.radius, b.baseRadius * 1.5));
+
+                if (b.radius <= 5) {
+                    bubbles.splice(i, 1); // Bubble shrunk to death
+                    continue;
+                }
+
+                drawRealisticBubble(ctx, b);
+            }
+
+            animationId = requestAnimationFrame(loop);
         }
     </script>
 </body>
