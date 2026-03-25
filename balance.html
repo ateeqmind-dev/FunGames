@@ -30,16 +30,26 @@
             border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
         }
 
-        /* Info Modal */
+        /* Info Modal & Settings */
         #info-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #1c1c24; border: 1px solid #00e5ff; padding: 30px; border-radius: 16px;
-            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            background: #1c1c24; border: 1px solid #00e5ff; padding: 25px; border-radius: 16px;
+            width: 85%; max-width: 400px; text-align: center; z-index: 40; color: white;
             box-shadow: 0 0 30px rgba(0, 229, 255, 0.2); display: none;
         }
+
+        .settings-container {
+            background: rgba(0,0,0,0.3); padding: 15px; border-radius: 12px; margin: 15px 0; text-align: left;
+        }
+        .setting-row { margin-bottom: 10px; }
+        .setting-row label { display: flex; justify-content: space-between; font-size: 0.9rem; color: #888899; margin-bottom: 5px; }
+        .setting-row input[type=range] {
+            width: 100%; accent-color: #00e5ff; background: #333; height: 6px; border-radius: 3px; outline: none;
+        }
+
         .close-modal { 
             background: #00e5ff; color: black; border: none; padding: 10px 20px; 
-            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+            border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 10px;
         }
     </style>
 </head>
@@ -50,14 +60,26 @@
 
     <div id="info-modal">
         <h2 style="color: #00e5ff; margin-bottom: 10px;">Glass Balance</h2>
-        <p style="color: #888899; line-height: 1.5;">Tilt your phone smoothly to roll the steel ball into the glowing target hole.<br><br><b>Warning:</b> The glass is incredibly fragile. Any sudden jerks or fast movements will shatter the glass instantly!</p>
+        <p style="color: #888899; line-height: 1.5; font-size: 0.95rem;">
+            Tilt smoothly to roll the ball into the hole.<br>
+            <b>Warning:</b> Sudden jerks will shatter the glass!
+        </p>
+
+        <div class="settings-container">
+            <div class="setting-row">
+                <label><span>Glass Durability</span> <span id="sens-val">Normal</span></label>
+                <!-- 1 = Extremely Fragile, 100 = Almost Unbreakable -->
+                <input type="range" id="glass-sens" min="1" max="100" value="50">
+            </div>
+        </div>
+
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
     </div>
 
     <div id="start-overlay">
-        <h2>Motion Sensors Required</h2>
-        <p style="color: #888899; margin-top: 10px;">This game requires tilt and sudden movement detection.</p>
-        <button id="start-btn">Enable Sensors & Start</button>
+        <h2>Sensors & Audio Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Tracks device tilt and plays rolling audio.</p>
+        <button id="start-btn">Enable & Start</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -73,25 +95,39 @@
         }
         window.addEventListener('resize', resize);
 
-        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+        // UI Setup
+        const infoModal = document.getElementById('info-modal');
+        const glassSensSlider = document.getElementById('glass-sens');
+        const sensValText = document.getElementById('sens-val');
+        
+        document.getElementById('btn-info').onclick = () => infoModal.style.display = 'block';
+
+        glassSensSlider.addEventListener('input', (e) => {
+            let val = e.target.value;
+            if (val < 30) sensValText.innerText = "Fragile";
+            else if (val > 70) sensValText.innerText = "Tough";
+            else sensValText.innerText = "Normal";
+        });
 
         // Physics State
         let ball = { x: 0, y: 0, vx: 0, vy: 0, radius: 15 };
-        let target = { x: 0, y: 0, radius: 20 };
+        let target = { x: 0, y: 0, radius: 22 };
         let gravity = { x: 0, y: 0 };
         
         // Game State
         let isShattered = false;
+        let isWinning = false;
         let glassShards = [];
-        let fallScale = 1; // Used to shrink the ball when falling into the void
-        const JERK_THRESHOLD = 8; // Acceleration limit before glass breaks
+        let fallScale = 1; 
 
-        // Shatter Motion Tracking
+        // Motion Tracking
         let lastX = 0, lastY = 0, lastZ = 0;
         let lastTime = 0;
 
+        // Audio State
+        let audioCtx, rollOsc, rollGain;
+
         function initLevel() {
-            // Glass Pane bounds
             const padding = 40;
             ball.x = canvas.width / 2;
             ball.y = canvas.height - 100;
@@ -102,45 +138,81 @@
             target.y = 100;
 
             isShattered = false;
+            isWinning = false;
             fallScale = 1;
             glassShards = [];
         }
 
-        // Handle Sensors
         document.getElementById('start-btn').addEventListener('click', async () => {
-            let motionGranted = false;
-            let orientGranted = false;
+            // Init Audio
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            rollOsc = audioCtx.createOscillator();
+            rollGain = audioCtx.createGain();
+            
+            rollOsc.type = 'triangle'; // Low rumble for rolling steel
+            rollGain.gain.value = 0;
+            
+            rollOsc.connect(rollGain);
+            rollGain.connect(audioCtx.destination);
+            rollOsc.start();
 
+            // Init Sensors
             if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
                 try {
-                    const state = await DeviceMotionEvent.requestPermission();
-                    if (state === 'granted') motionGranted = true;
-                } catch (e) { console.error(e); }
-            } else { motionGranted = true; }
-
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                try {
-                    const state = await DeviceOrientationEvent.requestPermission();
-                    if (state === 'granted') orientGranted = true;
-                } catch (e) { console.error(e); }
-            } else { orientGranted = true; }
-
-            if (orientGranted) window.addEventListener('deviceorientation', handleTilt);
-            if (motionGranted) window.addEventListener('devicemotion', handleJerk);
+                    await DeviceMotionEvent.requestPermission();
+                    await DeviceOrientationEvent.requestPermission();
+                } catch(e) { console.error(e); }
+            }
+            
+            window.addEventListener('deviceorientation', handleTilt);
+            window.addEventListener('devicemotion', handleJerk);
 
             resize();
             document.getElementById('start-overlay').style.display = 'none';
             loop();
         });
 
-        // Smooth Tilt for Rolling
-        function handleTilt(e) {
-            if (isShattered) return;
+        // Audio Effects
+        function playShatter() {
+            if (!audioCtx) return;
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
             
-            let tiltX = e.gamma; // left-to-right
-            let tiltY = e.beta;  // front-to-back
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.3);
+            
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+        }
 
-            // Clamp and convert to gravity vector
+        function playWin() {
+            if (!audioCtx) return;
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.type = 'sine'; // Smooth drop sound
+            osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(150, audioCtx.currentTime + 0.4);
+            
+            gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            
+            osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+        }
+
+        function handleTilt(e) {
+            if (isShattered || isWinning) return;
+            
+            let tiltX = e.gamma; 
+            let tiltY = e.beta;  
+
             if (tiltX > 90) tiltX = 90; if (tiltX < -90) tiltX = -90;
             if (tiltY > 90) tiltY = 90; if (tiltY < -90) tiltY = -90;
 
@@ -148,9 +220,8 @@
             gravity.y = (tiltY / 90) * 0.4;
         }
 
-        // Sudden Jerk for Shattering
         function handleJerk(e) {
-            if (isShattered) return;
+            if (isShattered || isWinning) return;
 
             let current = e.accelerationIncludingGravity;
             if (!current || !current.x) return;
@@ -158,22 +229,25 @@
             let currentTime = Date.now();
             if ((currentTime - lastTime) > 100) {
                 let diffTime = (currentTime - lastTime);
-                lastTime = currentTime;
-
                 let jerk = Math.abs(current.x + current.y + current.z - lastX - lastY - lastZ) / diffTime * 10000;
 
-                if (jerk > JERK_THRESHOLD) {
+                // Slider determines how much jerk is required to break it.
+                // 1 = Fragile (Threshold 10), 100 = Tough (Threshold 40)
+                let breakThreshold = 10 + (glassSensSlider.value * 0.3);
+
+                if (jerk > breakThreshold) {
                     shatterGlass();
                 }
 
                 lastX = current.x; lastY = current.y; lastZ = current.z;
+                lastTime = currentTime;
             }
         }
 
         function shatterGlass() {
             isShattered = true;
+            playShatter();
             
-            // Generate visual shards
             for(let i = 0; i < 30; i++) {
                 glassShards.push({
                     x: canvas.width / 2 + (Math.random() - 0.5) * canvas.width,
@@ -186,98 +260,109 @@
                 });
             }
 
-            // Restart level after 3 seconds
-            setTimeout(initLevel, 3000);
+            setTimeout(initLevel, 2000); // Faster restart
+        }
+
+        function triggerWin() {
+            isWinning = true;
+            playWin();
+            
+            // Snap to center of hole
+            ball.x = target.x;
+            ball.y = target.y;
+            ball.vx = 0;
+            ball.vy = 0;
+
+            setTimeout(initLevel, 1500);
         }
 
         function loop() {
-            // Dark Void Background
             ctx.fillStyle = '#050508';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             const glassPadding = 30;
 
+            // Audio Modulation: Roll Sound
+            if (audioCtx && !isShattered && !isWinning) {
+                let speed = Math.hypot(ball.vx, ball.vy);
+                if (speed > 0.5) {
+                    let vol = Math.min(0.15, speed * 0.015);
+                    let pitch = 40 + (speed * 8);
+                    rollGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.1);
+                    rollOsc.frequency.setTargetAtTime(pitch, audioCtx.currentTime, 0.1);
+                } else {
+                    rollGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+                }
+            } else if (audioCtx) {
+                rollGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+            }
+
             if (!isShattered) {
-                // Draw Glass Pane
+                // Draw Glass
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
                 ctx.strokeStyle = 'rgba(0, 229, 255, 0.3)';
                 ctx.lineWidth = 2;
-                ctx.shadowBlur = 20;
-                ctx.shadowColor = 'rgba(0, 229, 255, 0.2)';
-                
                 ctx.beginPath();
                 ctx.roundRect(glassPadding, glassPadding, canvas.width - glassPadding*2, canvas.height - glassPadding*2, 20);
-                ctx.fill();
-                ctx.stroke();
-                ctx.shadowBlur = 0; // Reset
+                ctx.fill(); ctx.stroke();
 
-                // Draw Target Hole
+                // Draw Hole
                 ctx.beginPath();
                 ctx.arc(target.x, target.y, target.radius, 0, Math.PI * 2);
                 ctx.fillStyle = '#000';
                 ctx.fill();
-                ctx.strokeStyle = '#00e5ff';
-                ctx.lineWidth = 3;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = '#00e5ff';
-                ctx.stroke();
-                ctx.shadowBlur = 0;
-
-                // Physics Update
-                ball.vx += gravity.x;
-                ball.vy += gravity.y;
-                ball.vx *= 0.98; // Friction
-                ball.vy *= 0.98;
-                ball.x += ball.vx;
-                ball.y += ball.vy;
-
-                // Win Condition
+                
+                // Highlight hole if close
                 let distToHole = Math.hypot(ball.x - target.x, ball.y - target.y);
-                if (distToHole < target.radius - 5) {
-                    ctx.fillStyle = 'rgba(0, 229, 255, 0.5)';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    initLevel(); // Quick reset on win
-                }
+                ctx.strokeStyle = distToHole < target.radius * 3 ? '#00e5ff' : 'rgba(0, 229, 255, 0.3)';
+                ctx.lineWidth = 3;
+                ctx.stroke();
 
-                // Fall off edge condition
-                if (ball.x < glassPadding || ball.x > canvas.width - glassPadding || 
-                    ball.y < glassPadding || ball.y > canvas.height - glassPadding) {
-                    shatterGlass(); // Falling off breaks the illusion
+                if (!isWinning) {
+                    // Physics Update
+                    ball.vx += gravity.x;
+                    ball.vy += gravity.y;
+                    ball.vx *= 0.98;
+                    ball.vy *= 0.98;
+                    ball.x += ball.vx;
+                    ball.y += ball.vy;
+
+                    // Hole Condition
+                    if (distToHole < target.radius - 8) {
+                        triggerWin();
+                    }
+
+                    // Fall off edge condition
+                    if (ball.x < glassPadding || ball.x > canvas.width - glassPadding || 
+                        ball.y < glassPadding || ball.y > canvas.height - glassPadding) {
+                        shatterGlass(); 
+                    }
+                } else {
+                    // Winning animation (Ball falls in hole)
+                    fallScale *= 0.85; 
                 }
             } else {
-                // Animate Shards
+                // Shard Animation
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
                 ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)';
                 ctx.lineWidth = 1;
 
                 glassShards.forEach(s => {
-                    s.x += s.vx;
-                    s.y += s.vy;
-                    s.vy += 0.5; // Gravity pulls shards down
-                    s.rot += s.rotSpeed;
-
+                    s.x += s.vx; s.y += s.vy; s.vy += 0.5; s.rot += s.rotSpeed;
                     ctx.save();
-                    ctx.translate(s.x, s.y);
-                    ctx.rotate(s.rot);
+                    ctx.translate(s.x, s.y); ctx.rotate(s.rot);
                     ctx.beginPath();
-                    ctx.moveTo(-s.size/2, -s.size/2);
-                    ctx.lineTo(s.size/2, -s.size/4);
-                    ctx.lineTo(0, s.size/2);
+                    ctx.moveTo(-s.size/2, -s.size/2); ctx.lineTo(s.size/2, -s.size/4); ctx.lineTo(0, s.size/2);
                     ctx.closePath();
-                    ctx.fill();
-                    ctx.stroke();
+                    ctx.fill(); ctx.stroke();
                     ctx.restore();
                 });
-
-                // Animate Ball Falling
-                fallScale *= 0.95;
+                fallScale *= 0.9;
             }
 
             // Draw Steel Ball
             if (fallScale > 0.05) {
                 let visualRadius = ball.radius * fallScale;
-                
-                // Metallic Gradient
                 let gradient = ctx.createRadialGradient(
                     ball.x - visualRadius * 0.3, ball.y - visualRadius * 0.3, visualRadius * 0.1, 
                     ball.x, ball.y, visualRadius
@@ -290,18 +375,14 @@
                 ctx.arc(ball.x, ball.y, visualRadius, 0, Math.PI * 2);
                 ctx.fillStyle = gradient;
                 
-                // Add drop shadow only if not falling
-                if (!isShattered) {
+                if (!isShattered && !isWinning) {
                     ctx.shadowBlur = 10;
                     ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-                    ctx.shadowOffsetX = 5;
-                    ctx.shadowOffsetY = 5;
+                    ctx.shadowOffsetX = 5; ctx.shadowOffsetY = 5;
                 }
                 
                 ctx.fill();
-                ctx.shadowBlur = 0;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
+                ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
             }
 
             requestAnimationFrame(loop);
