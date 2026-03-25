@@ -8,7 +8,7 @@
         body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
         
-        /* UI Buttons */
+        /* UI Top Buttons */
         .btn {
             position: absolute; top: 20px; width: 40px; height: 40px;
             border-radius: 50%; background: rgba(255, 255, 255, 0.1);
@@ -19,10 +19,33 @@
         #btn-info { left: 20px; }
         #btn-back { right: 20px; }
 
+        /* Bottom Toolbar */
+        #toolbar {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(28, 28, 36, 0.85); backdrop-filter: blur(10px);
+            padding: 10px 20px; border-radius: 20px; border: 1px solid rgba(255, 230, 0, 0.3);
+            display: flex; gap: 15px; align-items: center; z-index: 20;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+        }
+        .tool-group { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        .tool-group label { font-size: 0.7rem; color: #888899; text-transform: uppercase; letter-spacing: 1px; }
+        
+        /* Custom Inputs */
+        input[type="color"] {
+            -webkit-appearance: none; border: none; width: 30px; height: 30px;
+            border-radius: 50%; cursor: pointer; background: none; padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 2px solid white; border-radius: 50%; }
+        
+        input[type="range"] {
+            width: 80px; accent-color: #ffe600; background: #333; height: 4px; border-radius: 2px; outline: none;
+        }
+
         /* Start Overlay */
         #start-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
             justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
         }
         #start-btn {
@@ -33,13 +56,21 @@
         /* Info Modal */
         #info-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #1c1c24; border: 1px solid #ffe600; padding: 30px; border-radius: 16px;
-            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            background: #1c1c24; border: 1px solid #ffe600; padding: 25px; border-radius: 16px;
+            width: 85%; max-width: 400px; text-align: center; z-index: 40; color: white;
             box-shadow: 0 0 30px rgba(255, 230, 0, 0.2); display: none;
         }
+        
+        .settings-container {
+            background: rgba(0,0,0,0.3); padding: 15px; border-radius: 12px; margin: 15px 0; text-align: left;
+        }
+        .setting-row { margin-bottom: 10px; }
+        .setting-row label { display: flex; justify-content: space-between; font-size: 0.9rem; color: #888899; margin-bottom: 5px; }
+        .setting-row input[type=range] { width: 100%; }
+
         .close-modal { 
             background: #ffe600; color: black; border: none; padding: 10px 20px; 
-            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+            border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%;
         }
     </style>
 </head>
@@ -48,16 +79,43 @@
     <button class="btn" id="btn-info">ℹ️</button>
     <a href="index.html" class="btn" id="btn-back">✖</a>
 
+    <!-- Brush Settings Toolbar -->
+    <div id="toolbar">
+        <div class="tool-group">
+            <label>Color</label>
+            <input type="color" id="pen-color" value="#00f0ff">
+        </div>
+        <div class="tool-group">
+            <label>Thick</label>
+            <input type="range" id="pen-width" min="1" max="20" value="4">
+        </div>
+        <div class="tool-group">
+            <label>Glow</label>
+            <input type="range" id="pen-glow" min="0" max="40" value="15">
+        </div>
+    </div>
+
     <div id="info-modal">
         <h2 style="color: #ffe600; margin-bottom: 10px;">Rage-Erase</h2>
-        <p style="color: #888899; line-height: 1.5;">Draw neon art on the screen with your finger.<br><br>There is no clear button. To erase the canvas, physically <b>shake your phone</b> to shatter the drawing into pieces.</p>
+        <p style="color: #888899; line-height: 1.4; font-size: 0.95rem;">
+            Sketch your neon art. <br>To erase the canvas, physically <b>shake your phone</b> to shatter it!
+        </p>
+        
+        <div class="settings-container">
+            <div class="setting-row">
+                <label><span>Shake Sensitivity</span> <span id="sens-val">50%</span></label>
+                <!-- Higher percentage = Lower threshold = Easier to shake -->
+                <input type="range" id="shake-sens" min="10" max="100" value="50">
+            </div>
+        </div>
+
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
     </div>
 
     <div id="start-overlay">
-        <h2>Motion Sensor Required</h2>
-        <p style="color: #888899; margin-top: 10px;">This game needs to detect when you shake your phone.</p>
-        <button id="start-btn">Enable Shake & Start</button>
+        <h2>Sensors & Audio Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Tracks device shaking and plays dynamic drawing sounds.</p>
+        <button id="start-btn">Enable & Start</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -73,111 +131,183 @@
         window.addEventListener('resize', resize);
         resize();
 
+        // UI Setup
         document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+        const colorPicker = document.getElementById('pen-color');
+        const widthSlider = document.getElementById('pen-width');
+        const glowSlider = document.getElementById('pen-glow');
+        const shakeSlider = document.getElementById('shake-sens');
+        const sensValText = document.getElementById('sens-val');
+        
+        shakeSlider.addEventListener('input', (e) => sensValText.innerText = e.target.value + '%');
 
         // Drawing State
-        let paths = [];
-        let currentPath = [];
+        let paths = []; // Stores { points: [], color, width, glow }
+        let currentPath = null;
         let isDrawing = false;
-        let hue = 0;
+        let lastTouchX = 0, lastTouchY = 0;
 
-        // Physics State (for when the drawing shatters)
+        // Physics State (Shattering)
         let shatteredParticles = [];
         let isShattering = false;
 
         // Shake Detection State
-        let lastX, lastY, lastZ;
+        let lastX = 0, lastY = 0, lastZ = 0;
         let lastTime = 0;
-        const SHAKE_THRESHOLD = 15; // Adjust sensitivity
+
+        // Audio State (Electric Hum)
+        let audioCtx, synthOsc, synthGain;
+
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            // Audio Init
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            synthOsc = audioCtx.createOscillator();
+            synthGain = audioCtx.createGain();
+            
+            synthOsc.type = 'sawtooth'; // Gives it that electric neon buzz
+            synthGain.gain.value = 0; // Start silent
+            
+            synthOsc.connect(synthGain);
+            synthGain.connect(audioCtx.destination);
+            synthOsc.start();
+
+            // Motion Init
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const state = await DeviceMotionEvent.requestPermission();
+                    if (state === 'granted') window.addEventListener('devicemotion', handleMotion);
+                } catch(e) { console.error(e); }
+            } else {
+                window.addEventListener('devicemotion', handleMotion);
+            }
+
+            document.getElementById('start-overlay').style.display = 'none';
+            loop();
+        });
 
         // Input Handling
         canvas.addEventListener('pointerdown', (e) => {
+            // Don't draw if tapping the toolbar
+            if (e.clientY > canvas.height - 80) return; 
+
             isDrawing = true;
-            isShattering = false; // Stop shattering if drawing again
-            currentPath = [{ x: e.clientX, y: e.clientY, h: hue }];
-        });
+            isShattering = false; // Stop falling particles if user starts drawing again
+            lastTouchX = e.clientX;
+            lastTouchY = e.clientY;
 
-        canvas.addEventListener('pointermove', (e) => {
-            if (!isDrawing) return;
-            hue = (hue + 1) % 360; // Cycle colors
-            currentPath.push({ x: e.clientX, y: e.clientY, h: hue });
-        });
+            currentPath = {
+                color: colorPicker.value,
+                width: parseInt(widthSlider.value),
+                glow: parseInt(glowSlider.value),
+                points: [{ x: e.clientX, y: e.clientY }]
+            };
 
-        canvas.addEventListener('pointerup', () => {
-            if (!isDrawing) return;
-            isDrawing = false;
-            paths.push(currentPath);
-            currentPath = [];
-        });
-
-        // Handle Sensor Permission
-        document.getElementById('start-btn').addEventListener('click', () => {
-            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-                DeviceMotionEvent.requestPermission()
-                    .then(permissionState => {
-                        if (permissionState === 'granted') {
-                            window.addEventListener('devicemotion', handleMotion);
-                            startGame();
-                        } else {
-                            alert("Permission denied. Shake to erase will not work.");
-                        }
-                    })
-                    .catch(console.error);
-            } else {
-                window.addEventListener('devicemotion', handleMotion);
-                startGame();
+            // Ramp up audio volume
+            if (audioCtx) {
+                synthGain.gain.setTargetAtTime(0.05, audioCtx.currentTime, 0.05);
+                synthOsc.frequency.setTargetAtTime(150, audioCtx.currentTime, 0.05);
             }
         });
 
-        function startGame() {
-            document.getElementById('start-overlay').style.display = 'none';
-            loop();
+        canvas.addEventListener('pointermove', (e) => {
+            if (!isDrawing || !currentPath) return;
+            
+            currentPath.points.push({ x: e.clientX, y: e.clientY });
+
+            // Calculate drawing speed to modulate the sound pitch
+            if (audioCtx) {
+                let speed = Math.hypot(e.clientX - lastTouchX, e.clientY - lastTouchY);
+                let targetPitch = 150 + (speed * 5); // Faster draw = higher electric whine
+                synthOsc.frequency.setTargetAtTime(Math.min(targetPitch, 600), audioCtx.currentTime, 0.1);
+            }
+
+            lastTouchX = e.clientX;
+            lastTouchY = e.clientY;
+        });
+
+        function stopDrawing() {
+            if (!isDrawing) return;
+            isDrawing = false;
+            if (currentPath && currentPath.points.length > 0) {
+                paths.push(currentPath);
+            }
+            currentPath = null;
+
+            // Ramp down audio volume
+            if (audioCtx) synthGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
         }
 
-        // Detect Shake
+        canvas.addEventListener('pointerup', stopDrawing);
+        canvas.addEventListener('pointerout', stopDrawing);
+
+        // Shake Detection
         function handleMotion(e) {
             let current = e.accelerationIncludingGravity;
-            if (!current.x) return; // Ignore if no data
+            if (!current || !current.x) return;
 
             let currentTime = Date.now();
             if ((currentTime - lastTime) > 100) {
                 let diffTime = (currentTime - lastTime);
                 lastTime = currentTime;
 
-                let speed = Math.abs(current.x + current.y + current.z - lastX - lastY - lastZ) / diffTime * 10000;
+                let force = Math.abs(current.x + current.y + current.z - lastX - lastY - lastZ) / diffTime * 10000;
 
-                if (speed > SHAKE_THRESHOLD) {
+                // Map slider (10% to 100%) to a threshold. 100% = easy (threshold ~8), 10% = hard (threshold ~30)
+                let mappedThreshold = 35 - (shakeSlider.value * 0.27); 
+
+                if (force > mappedThreshold && !isShattering) {
                     shatterDrawing();
                 }
 
-                lastX = current.x;
-                lastY = current.y;
-                lastZ = current.z;
+                lastX = current.x; lastY = current.y; lastZ = current.z;
             }
         }
 
         function shatterDrawing() {
-            if (paths.length === 0 && currentPath.length === 0) return;
+            if (paths.length === 0 && (!currentPath || currentPath.points.length === 0)) return;
+            stopDrawing();
             
-            // Convert all paths into falling particles
+            // Extract all points and assign their respective path color to them
             let allPoints = [];
-            paths.forEach(path => allPoints = allPoints.concat(path));
-            allPoints = allPoints.concat(currentPath);
+            paths.forEach(path => {
+                path.points.forEach(p => allPoints.push({ x: p.x, y: p.y, color: path.color }));
+            });
 
+            // Convert to physics particles
             shatteredParticles = allPoints.map(p => ({
                 x: p.x,
                 y: p.y,
-                color: `hsl(${p.h}, 100%, 50%)`,
-                vx: (Math.random() - 0.5) * 10,
-                vy: (Math.random() - 0.5) * 10 - 5, // Initial upward burst
-                gravity: 0.5 + Math.random() * 0.5
+                color: p.color,
+                vx: (Math.random() - 0.5) * 15,
+                vy: (Math.random() - 0.5) * 10 - 5, // Initial upward pop
+                gravity: 0.5 + Math.random() * 0.8
             }));
 
-            // Clear drawing arrays
-            paths = [];
-            currentPath = [];
-            isDrawing = false;
+            // Play shatter "crash" sound
+            if (audioCtx) {
+                synthOsc.frequency.setValueAtTime(100, audioCtx.currentTime);
+                synthOsc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.3);
+                synthGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                synthGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            }
+
+            paths = []; // Clear canvas data
             isShattering = true;
+        }
+
+        function drawPath(path) {
+            if (path.points.length < 2) return;
+            ctx.beginPath();
+            ctx.moveTo(path.points[0].x, path.points[0].y);
+            for (let i = 1; i < path.points.length; i++) {
+                ctx.lineTo(path.points[i].x, path.points[i].y);
+            }
+            ctx.strokeStyle = path.color;
+            ctx.lineWidth = path.width;
+            ctx.shadowBlur = path.glow;
+            ctx.shadowColor = path.color;
+            ctx.stroke();
+            ctx.shadowBlur = 0; // Reset for performance
         }
 
         function loop() {
@@ -186,17 +316,14 @@
 
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
-            ctx.lineWidth = 4;
 
-            // Draw saved paths
+            // Render all saved lines
             paths.forEach(path => drawPath(path));
             
-            // Draw current path
-            if (currentPath.length > 0) {
-                drawPath(currentPath);
-            }
+            // Render the line currently being drawn
+            if (currentPath) drawPath(currentPath);
 
-            // Draw Shattered Particles
+            // Render Shattered Falling Particles
             if (isShattering) {
                 for (let i = shatteredParticles.length - 1; i >= 0; i--) {
                     let p = shatteredParticles[i];
@@ -210,31 +337,14 @@
                     ctx.shadowBlur = 10;
                     ctx.shadowColor = p.color;
                     ctx.fill();
-                    ctx.shadowBlur = 0; // reset
+                    ctx.shadowBlur = 0;
 
-                    // Remove if off screen
-                    if (p.y > canvas.height + 10) {
-                        shatteredParticles.splice(i, 1);
-                    }
+                    if (p.y > canvas.height + 20) shatteredParticles.splice(i, 1);
                 }
                 if (shatteredParticles.length === 0) isShattering = false;
             }
 
             requestAnimationFrame(loop);
-        }
-
-        function drawPath(path) {
-            if (path.length < 2) return;
-            for (let i = 1; i < path.length; i++) {
-                ctx.beginPath();
-                ctx.moveTo(path[i-1].x, path[i-1].y);
-                ctx.lineTo(path[i].x, path[i].y);
-                ctx.strokeStyle = `hsl(${path[i].h}, 100%, 50%)`;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = `hsl(${path[i].h}, 100%, 50%)`;
-                ctx.stroke();
-            }
-            ctx.shadowBlur = 0; // reset
         }
     </script>
 </body>
