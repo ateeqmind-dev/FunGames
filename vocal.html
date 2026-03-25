@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Vocal EQ</title>
+    <title>Vocal Pitch Hole</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #0f0f13; font-family: 'Segoe UI', sans-serif; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -22,30 +22,31 @@
         /* Start Overlay */
         #start-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
             justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
         }
         #start-btn {
-            padding: 15px 30px; font-size: 1.2rem; background: #a200ff; color: white;
+            padding: 15px 30px; font-size: 1.2rem; background: #00f0ff; color: black;
             border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
         }
 
         /* Info Modal */
         #info-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #1c1c24; border: 1px solid #a200ff; padding: 30px; border-radius: 16px;
-            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
-            box-shadow: 0 0 30px rgba(162, 0, 255, 0.2); display: none;
-        }
-        .close-modal { 
-            background: #a200ff; color: white; border: none; padding: 10px 20px; 
-            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+            background: #1c1c24; border: 1px solid #00f0ff; padding: 25px; border-radius: 16px;
+            width: 85%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            box-shadow: 0 0 30px rgba(0, 240, 255, 0.2); display: none;
         }
 
-        /* Score HUD */
-        #score-hud {
-            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-            font-size: 1.5rem; font-weight: bold; color: #a200ff; text-shadow: 0 0 10px #a200ff;
+        .close-modal { 
+            background: #00f0ff; color: black; border: none; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 15px;
+        }
+
+        /* HUD */
+        #hud {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            font-size: 2rem; font-weight: bold; color: #ffffff; text-shadow: 0 0 10px #00f0ff;
             pointer-events: none; z-index: 10;
         }
     </style>
@@ -56,18 +57,23 @@
     <a href="index.html" class="btn" id="btn-back">✖</a>
 
     <div id="info-modal">
-        <h2 style="color: #a200ff; margin-bottom: 10px;">Vocal EQ</h2>
-        <p style="color: #888899; line-height: 1.5;">Use your voice to manipulate the equalizer bars.<br><br><b>Hum low</b> to raise the left bars. <b>Whistle or shush</b> to raise the right bars. Try to match the shape of the glowing pink target line!</p>
+        <h2 style="color: #00f0ff; margin-bottom: 10px;">Vocal Pitch</h2>
+        <p style="color: #888899; line-height: 1.4; font-size: 0.95rem;">
+            Control the glowing ball with your voice!<br><br>
+            <b>Hum low</b> to drop the ball.<br>
+            <b>Sing high</b> or whistle to raise it.<br>
+            Navigate through the holes in the wooden walls. If you crash, your score resets!
+        </p>
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
     </div>
 
     <div id="start-overlay">
         <h2>Microphone Required</h2>
-        <p style="color: #888899; margin-top: 10px;">This game analyzes the frequency of your voice.</p>
+        <p style="color: #888899; margin-top: 10px;">This game analyzes the pitch (frequency) of your voice.</p>
         <button id="start-btn">Enable Mic & Start</button>
     </div>
 
-    <div id="score-hud">MATCHED: <span id="score">0</span></div>
+    <div id="hud">SCORE: <span id="score">0</span></div>
 
     <canvas id="gameCanvas"></canvas>
 
@@ -79,6 +85,7 @@
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            ball.y = canvas.height / 2;
         }
         window.addEventListener('resize', resize);
         resize();
@@ -86,106 +93,200 @@
         document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
 
         // Audio State
-        let audioContext, analyser, microphone, dataArray;
-        const numBars = 32; // Simplified EQ resolution for the game
+        let audioCtx, analyser, microphone, dataArray;
+        // Frequency bounds for vocal pitch (adjust if it feels too hard to reach top/bottom)
+        const minFreq = 100;  // Deep hum
+        const maxFreq = 800;  // High whistle/falsetto
         
         // Game State
-        let targetLevels = new Array(numBars).fill(0);
         let score = 0;
-        let holdTime = 0; // How long player has matched the shape
+        let gameSpeed = 3;
+        
+        let ball = {
+            x: canvas.width * 0.2, // Fixed horizontal position (20% from left)
+            y: canvas.height / 2,
+            targetY: canvas.height / 2,
+            radius: 12
+        };
 
-        // Generate a new random target curve
-        function generateTarget() {
-            let peakIndex = Math.floor(Math.random() * numBars);
-            let width = 4 + Math.random() * 6; // How wide the peak is
-            
-            for (let i = 0; i < numBars; i++) {
-                // Create a bell-curve like shape around the peak
-                let distance = Math.abs(i - peakIndex);
-                if (distance < width) {
-                    targetLevels[i] = 150 + Math.random() * 100 * (1 - distance / width);
-                } else {
-                    targetLevels[i] = 20 + Math.random() * 40; // Background noise level
-                }
-            }
+        let obstacles = [];
+        const holeSize = 120; // Size of the gap
+        const obstacleWidth = 60;
+        let framesSinceLastObstacle = 0;
+
+        function spawnObstacle() {
+            // Randomize hole height, keeping it away from the extreme edges
+            let minHoleY = holeSize;
+            let maxHoleY = canvas.height - holeSize;
+            let holeY = minHoleY + Math.random() * (maxHoleY - minHoleY);
+
+            obstacles.push({
+                x: canvas.width,
+                holeTop: holeY - (holeSize / 2),
+                holeBottom: holeY + (holeSize / 2),
+                passed: false
+            });
         }
 
-        generateTarget();
-
-        // Start Mic
+        // Initialize Audio
         document.getElementById('start-btn').addEventListener('click', async () => {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                analyser = audioContext.createAnalyser();
-                analyser.fftSize = 128; // Smaller FFT size means fewer, wider frequency bins (easier to hit)
-                analyser.smoothingTimeConstant = 0.8; // Smooth out the mic input
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioCtx.createAnalyser();
                 
-                microphone = audioContext.createMediaStreamSource(stream);
+                // 2048 FFT size gives us a nice high resolution for finding specific pitch frequencies
+                analyser.fftSize = 2048; 
+                analyser.smoothingTimeConstant = 0.8;
+                
+                microphone = audioCtx.createMediaStreamSource(stream);
                 microphone.connect(analyser);
-                
-                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                dataArray = new Float32Array(analyser.frequencyBinCount);
                 
                 document.getElementById('start-overlay').style.display = 'none';
+                spawnObstacle();
                 loop();
             } catch (err) {
-                alert("Microphone access denied or not available.");
+                alert("Microphone access denied.");
             }
         });
 
-        function loop() {
-            analyser.getByteFrequencyData(dataArray);
+        // Function to find the dominant pitch frequency
+        function getPitch() {
+            analyser.getFloatFrequencyData(dataArray);
+            
+            let maxVal = -Infinity;
+            let maxIndex = -1;
+            
+            // Find the frequency bin with the highest energy
+            for (let i = 0; i < dataArray.length; i++) {
+                if (dataArray[i] > maxVal) {
+                    maxVal = dataArray[i];
+                    maxIndex = i;
+                }
+            }
 
+            // If the volume is too low, assume silence
+            if (maxVal < -60) return null;
+
+            // Convert bin index to Hz
+            let nyquist = audioCtx.sampleRate / 2;
+            let hz = (maxIndex / dataArray.length) * nyquist;
+            return hz;
+        }
+
+        function resetGame() {
+            score = 0;
+            scoreDisplay.innerText = score;
+            obstacles = [];
+            gameSpeed = 3;
+            spawnObstacle();
+            
+            // Screen flash red
+            ctx.fillStyle = 'rgba(255, 0, 60, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function loop() {
+            // 1. Process Audio Input
+            let pitch = getPitch();
+            
+            if (pitch !== null) {
+                // Clamp the pitch within our vocal range bounds
+                let clampedPitch = Math.max(minFreq, Math.min(pitch, maxFreq));
+                
+                // Map pitch to Y coordinate (inverted: high freq = low Y/top of screen)
+                let pitchPercent = (clampedPitch - minFreq) / (maxFreq - minFreq);
+                ball.targetY = canvas.height - (pitchPercent * canvas.height);
+            } else {
+                // If silent, slowly sink to the bottom
+                ball.targetY = canvas.height - ball.radius; 
+            }
+
+            // Smooth ball movement (lerp)
+            ball.y += (ball.targetY - ball.y) * 0.15;
+
+            // Prevent ball going completely off screen
+            ball.y = Math.max(ball.radius, Math.min(ball.y, canvas.height - ball.radius));
+
+
+            // 2. Draw Background
             ctx.fillStyle = '#0f0f13';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            let barWidth = (canvas.width / numBars) - 2;
-            let matchScore = 0;
-            let totalPossible = numBars * 255; // Max difference
 
-            for (let i = 0; i < numBars; i++) {
-                // We map the 64 data array bins to our 32 visible bars
-                let value = dataArray[i]; 
-                
-                let x = i * (barWidth + 2);
-                let y = canvas.height - value;
-                let targetY = canvas.height - targetLevels[i];
-
-                // Calculate how close the player is to the target
-                let diff = Math.abs(value - targetLevels[i]);
-                matchScore += diff;
-
-                // Draw Target Outline
-                ctx.beginPath();
-                ctx.rect(x, targetY, barWidth, targetLevels[i]);
-                ctx.strokeStyle = 'rgba(255, 0, 127, 0.5)';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-
-                // Draw Player Input EQ Bar
-                ctx.fillStyle = diff < 40 ? '#00f0ff' : '#a200ff'; // Turns cyan if close to target
-                ctx.shadowBlur = diff < 40 ? 15 : 0;
-                ctx.shadowColor = '#00f0ff';
-                ctx.fillRect(x, y, barWidth, value);
-                ctx.shadowBlur = 0; // reset
+            // 3. Update & Draw Obstacles
+            framesSinceLastObstacle++;
+            // Spawn new obstacle roughly every 3-4 seconds depending on speed
+            if (framesSinceLastObstacle > (canvas.width / gameSpeed) * 0.45) {
+                spawnObstacle();
+                framesSinceLastObstacle = 0;
             }
 
-            // Check if player matches the shape (lower difference = better match)
-            if (matchScore < (totalPossible * 0.15)) { // 85% accuracy required
-                holdTime++;
-                if (holdTime > 30) { // Hold for half a second
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                let obs = obstacles[i];
+                obs.x -= gameSpeed;
+
+                // Draw Wooden Wall
+                ctx.fillStyle = '#8B4513'; // SaddleBrown
+                
+                // Top piece
+                ctx.fillRect(obs.x, 0, obstacleWidth, obs.holeTop);
+                // Bottom piece
+                ctx.fillRect(obs.x, obs.holeBottom, obstacleWidth, canvas.height - obs.holeBottom);
+
+                // Wood grain details
+                ctx.fillStyle = '#654321'; // Darker brown
+                ctx.fillRect(obs.x + 10, 0, 5, obs.holeTop);
+                ctx.fillRect(obs.x + 40, 0, 8, obs.holeTop);
+                ctx.fillRect(obs.x + 15, obs.holeBottom, 4, canvas.height);
+                ctx.fillRect(obs.x + 45, obs.holeBottom, 6, canvas.height);
+
+                // Collision Detection
+                let ballRight = ball.x + ball.radius;
+                let ballLeft = ball.x - ball.radius;
+                let ballTop = ball.y - ball.radius;
+                let ballBottom = ball.y + ball.radius;
+
+                // If ball is horizontally inside the obstacle
+                if (ballRight > obs.x && ballLeft < obs.x + obstacleWidth) {
+                    // If ball hits the wood (top or bottom)
+                    if (ballTop < obs.holeTop || ballBottom > obs.holeBottom) {
+                        resetGame();
+                        break; // Exit loop early on crash
+                    }
+                }
+
+                // Score update
+                if (!obs.passed && ballLeft > obs.x + obstacleWidth) {
+                    obs.passed = true;
                     score++;
                     scoreDisplay.innerText = score;
-                    generateTarget(); // Next level
-                    holdTime = 0;
-                    
-                    // Flash screen green on success
-                    ctx.fillStyle = 'rgba(0, 255, 136, 0.3)';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    gameSpeed += 0.1; // Slightly speed up game
                 }
-            } else {
-                holdTime = Math.max(0, holdTime - 2); // Lose progress if you drop pitch
+
+                // Remove off-screen obstacles
+                if (obs.x + obstacleWidth < 0) {
+                    obstacles.splice(i, 1);
+                }
             }
+
+
+            // 4. Draw Ball
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#00f0ff';
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00f0ff';
+            ctx.fill();
+            ctx.shadowBlur = 0; // Reset
+
+            // Draw a faint guide line for the target pitch so user can see where they are aiming
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.targetY, ball.radius, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(0, 240, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
 
             requestAnimationFrame(loop);
         }
