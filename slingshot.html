@@ -19,16 +19,37 @@
         #btn-info { left: 20px; }
         #btn-back { right: 20px; }
 
+        /* Start Overlay (Required for Audio) */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #00f0ff; color: black;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
         /* Info Modal */
         #info-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #1c1c24; border: 1px solid #00f0ff; padding: 30px; border-radius: 16px;
-            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            background: #1c1c24; border: 1px solid #00f0ff; padding: 25px; border-radius: 16px;
+            width: 85%; max-width: 400px; text-align: center; z-index: 40; color: white;
             box-shadow: 0 0 30px rgba(0, 240, 255, 0.2); display: none;
         }
+        
+        .settings-container {
+            background: rgba(0,0,0,0.3); padding: 15px; border-radius: 12px; margin: 15px 0; text-align: left;
+        }
+        .setting-row { margin-bottom: 10px; }
+        .setting-row label { display: flex; justify-content: space-between; font-size: 0.9rem; color: #888899; margin-bottom: 5px; }
+        .setting-row input[type=range] {
+            width: 100%; accent-color: #00f0ff; background: #333; height: 6px; border-radius: 3px; outline: none;
+        }
+
         .close-modal { 
             background: #00f0ff; color: black; border: none; padding: 10px 20px; 
-            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+            border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%;
         }
         
         /* Aiming Line Overlay */
@@ -44,19 +65,32 @@
 
     <div id="info-modal">
         <h2 style="color: #00f0ff; margin-bottom: 10px;">Neon Slingshot</h2>
-        <p style="color: #888899; line-height: 1.5;">Swipe anywhere on the screen. <br><br>A <b>fast flick</b> shoots a high-speed piercing triangle. <br>A <b>slow swipe</b> spawns a heavy bouncing square.</p>
+        <p style="color: #888899; line-height: 1.4; font-size: 0.95rem;">
+            Swipe anywhere to shoot.<br>Your speed determines the shape and sound!
+        </p>
+
+        <div class="settings-container">
+            <div class="setting-row">
+                <label><span>Shape Lifespan</span> <span id="life-val">3s</span></label>
+                <input type="range" id="life-sens" min="1" max="10" value="3">
+            </div>
+        </div>
+
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Audio Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Click start to enable the synthesizer sounds.</p>
+        <button id="start-btn">Enable Audio & Start</button>
     </div>
 
     <canvas id="aim-layer"></canvas>
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // Setup Game Canvas (Draws particles)
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        
-        // Setup Aiming Canvas (Draws the swipe line)
         const aimCanvas = document.getElementById('aim-layer');
         const aimCtx = aimCanvas.getContext('2d');
 
@@ -67,8 +101,61 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // UI Logic
-        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+        // UI Setup
+        const infoModal = document.getElementById('info-modal');
+        const lifeSlider = document.getElementById('life-sens');
+        const lifeValDisplay = document.getElementById('life-val');
+        
+        document.getElementById('btn-info').onclick = () => infoModal.style.display = 'block';
+        lifeSlider.addEventListener('input', (e) => lifeValDisplay.innerText = e.target.value + 's');
+
+        // Audio Setup (Synthesizer)
+        let audioCtx;
+        
+        document.getElementById('start-btn').addEventListener('click', () => {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            document.getElementById('start-overlay').style.display = 'none';
+            loop(); // Start game loop
+        });
+
+        function playWhoosh(speed) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            // Fast swipe = higher pitch
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(100 + (speed * 50), audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.4);
+            
+            gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.4);
+        }
+
+        function playBounce(speed) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(300 + Math.random() * 200, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+            
+            // Harder hit = louder sound
+            let volume = Math.min(0.2, speed * 0.05);
+            gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
 
         // Game State
         let particles = [];
@@ -93,31 +180,46 @@
             if (!isSwiping) return;
             isSwiping = false;
             
-            aimCtx.clearRect(0, 0, aimCanvas.width, aimCanvas.height); // Clear aiming line
+            aimCtx.clearRect(0, 0, aimCanvas.width, aimCanvas.height);
 
             let dx = currentX - startX;
             let dy = currentY - startY;
             let time = Date.now() - startTime;
             let distance = Math.hypot(dx, dy);
             
-            // Prevent spawning on accidental taps
             if(distance > 20) {
                 let velocity = distance / time; // pixels per ms
                 
+                // Determine shape type based on velocity
+                let type = 'square';
+                if (velocity > 0.8) type = 'pentagon';
+                if (velocity > 1.5) type = 'triangle';
+                if (velocity > 2.5) type = 'star';
+
+                // Play sound if moving relatively fast
+                if (velocity > 1.0) playWhoosh(velocity);
+
                 particles.push({
                     x: startX, 
                     y: startY,
-                    vx: dx * 0.05, // Scale down visual speed
+                    vx: dx * 0.05,
                     vy: dy * 0.05,
                     speed: velocity,
+                    type: type,
                     life: 255,
-                    rotation: Math.atan2(dy, dx) // Point in direction of travel
+                    rotation: Math.atan2(dy, dx),
+                    spin: (Math.random() - 0.5) * 0.1 // Adding a little tumbling effect
                 });
             }
         });
 
         function loop() {
-            // Draw aiming line if currently swiping
+            // Calculate fade decrement based on UI slider (Assuming ~60fps)
+            // If slider is 3s, it takes 180 frames to drain 255 life.
+            let seconds = parseInt(lifeSlider.value);
+            let lifeDecrement = 255 / (seconds * 60);
+
+            // Draw aiming line
             if (isSwiping) {
                 aimCtx.clearRect(0, 0, aimCanvas.width, aimCanvas.height);
                 aimCtx.beginPath();
@@ -129,8 +231,8 @@
                 aimCtx.stroke();
             }
 
-            // Dark trailing effect for the background
-            ctx.fillStyle = 'rgba(15, 15, 19, 0.2)';
+            // Dark trailing effect
+            ctx.fillStyle = 'rgba(15, 15, 19, 0.25)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             // Update and draw particles
@@ -138,32 +240,57 @@
                 let p = particles[i];
                 p.x += p.vx;
                 p.y += p.vy;
-                p.life -= 1.5; // Fade out rate
+                p.rotation += p.spin;
+                p.life -= lifeDecrement;
 
-                // Bounce off walls with slight energy loss
-                if(p.x < 0 || p.x > canvas.width) { p.vx *= -0.9; p.x = p.x < 0 ? 0 : canvas.width; }
-                if(p.y < 0 || p.y > canvas.height) { p.vy *= -0.9; p.y = p.y < 0 ? 0 : canvas.height; }
+                // Bounce off walls & play sound
+                let bounced = false;
+                if(p.x < 15) { p.vx *= -0.9; p.x = 15; bounced = true; }
+                if(p.x > canvas.width - 15) { p.vx *= -0.9; p.x = canvas.width - 15; bounced = true; }
+                if(p.y < 15) { p.vy *= -0.9; p.y = 15; bounced = true; }
+                if(p.y > canvas.height - 15) { p.vy *= -0.9; p.y = canvas.height - 15; bounced = true; }
+                
+                if (bounced && p.speed > 0.5) playBounce(p.speed);
 
                 ctx.save();
                 ctx.translate(p.x, p.y);
                 ctx.rotate(p.rotation);
 
                 ctx.beginPath();
-                if (p.speed > 1.2) {
-                    // Fast flick = High-speed Triangle
-                    ctx.moveTo(15, 0);
-                    ctx.lineTo(-10, 10);
-                    ctx.lineTo(-10, -10);
+                ctx.shadowBlur = 15;
+
+                // Draw different shapes based on speed
+                if (p.type === 'star') {
+                    // Super Fast: Yellow Blazing Star
+                    for(let j=0; j<8; j++){
+                        let r = (j%2 === 0) ? 18 : 6;
+                        let a = (Math.PI*2/8) * j;
+                        ctx.lineTo(r*Math.cos(a), r*Math.sin(a));
+                    }
+                    ctx.fillStyle = `rgba(255, 230, 0, ${p.life/255})`;
+                    ctx.shadowColor = '#ffe600';
+                } 
+                else if (p.type === 'triangle') {
+                    // Fast: Cyan Piercing Triangle
+                    ctx.moveTo(15, 0); ctx.lineTo(-10, 10); ctx.lineTo(-10, -10);
                     ctx.fillStyle = `rgba(0, 240, 255, ${p.life/255})`;
                     ctx.shadowColor = '#00f0ff';
-                } else {
-                    // Slow swipe = Heavy Square
-                    ctx.rect(-12, -12, 24, 24);
+                } 
+                else if (p.type === 'pentagon') {
+                    // Medium: Purple Bouncing Pentagon
+                    for (let j=0; j<5; j++) {
+                        ctx.lineTo(12 * Math.cos(j * 2 * Math.PI / 5), 12 * Math.sin(j * 2 * Math.PI / 5));
+                    }
+                    ctx.fillStyle = `rgba(162, 0, 255, ${p.life/255})`;
+                    ctx.shadowColor = '#a200ff';
+                } 
+                else {
+                    // Slow: Heavy Red Square
+                    ctx.rect(-10, -10, 20, 20);
                     ctx.fillStyle = `rgba(255, 0, 60, ${p.life/255})`;
                     ctx.shadowColor = '#ff003c';
                 }
                 
-                ctx.shadowBlur = 15;
                 ctx.fill();
                 ctx.restore();
 
@@ -173,9 +300,6 @@
 
             requestAnimationFrame(loop);
         }
-
-        // Start animation loop
-        loop();
     </script>
 </body>
 </html>
