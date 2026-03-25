@@ -22,12 +22,13 @@
         /* Start Overlay */
         #start-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
             justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
         }
         #start-btn {
             padding: 15px 30px; font-size: 1.2rem; background: #ff007f; color: white;
             border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+            box-shadow: 0 0 15px rgba(255, 0, 127, 0.5);
         }
 
         /* Info Modal */
@@ -39,7 +40,7 @@
         }
         .close-modal { 
             background: #ff007f; color: white; border: none; padding: 10px 20px; 
-            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold; width: 100%;
         }
     </style>
 </head>
@@ -50,14 +51,17 @@
 
     <div id="info-modal">
         <h2 style="color: #ff007f; margin-bottom: 10px;">Fluid Sandbox</h2>
-        <p style="color: #888899; line-height: 1.5;">Tilt your phone to change the direction of gravity and watch the neon fluid flow.<br><br>Draw on the screen with your finger to create solid barriers for the fluid to pool around.</p>
+        <p style="color: #888899; line-height: 1.5; font-size: 0.95rem;">
+            Tilt your phone to pour the crystal beads.<br><br>
+            Draw on the screen to create solid, bouncy barriers. Listen to them clink as they collide!
+        </p>
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
     </div>
 
     <div id="start-overlay">
-        <h2>Motion Sensor Required</h2>
-        <p style="color: #888899; margin-top: 10px;">This game uses your device's gyroscope to simulate gravity.</p>
-        <button id="start-btn">Enable Tilt & Start</button>
+        <h2>Sensors Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Requires device tilt to control gravity and audio for collisions.</p>
+        <button id="start-btn">Enable Sensors & Start</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -77,13 +81,13 @@
 
         // Physics State
         let particles = [];
-        let barriers = []; // Drawn obstacles
+        let barriers = []; 
         let gravityX = 0;
-        let gravityY = 0.5; // Default downward gravity
-        const numParticles = 300;
+        let gravityY = 0.5; 
+        const numParticles = 150; // Optimized for N-body collisions
 
-        // Colors
-        const colors = ['#00f0ff', '#ff007f', '#a200ff'];
+        // Colors (Crystalline)
+        const colors = ['#00f0ff', '#ff007f', '#ffffff'];
 
         // Init Particles
         for (let i = 0; i < numParticles; i++) {
@@ -92,122 +96,229 @@
                 y: Math.random() * canvas.height,
                 vx: 0,
                 vy: 0,
-                radius: 3 + Math.random() * 2,
+                radius: 4 + Math.random() * 2, // Slightly larger, varying sizes
                 color: colors[Math.floor(Math.random() * colors.length)]
             });
         }
 
-        // Handle Sensor Permission and Initialization
+        // --- Audio Synthesizer ---
+        let audioCtx;
+        let soundsThisFrame = 0; // Throttle overlapping sounds to prevent speakers blowing out
+
+        function playClink(impactSpeed, type) {
+            if (!audioCtx || soundsThisFrame > 3) return; 
+            
+            // Only play sound if the impact is hard enough
+            if (impactSpeed < 0.5) return; 
+            
+            soundsThisFrame++;
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            // Sine wave for that pure "glass clink"
+            osc.type = 'sine'; 
+            
+            // Higher pitch for beads hitting each other, lower for walls
+            let freq = type === 'bead' ? 2000 + (Math.random() * 1000) : 800 + (Math.random() * 400);
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+
+            // Volume scales with impact speed, capped so it doesn't get deafening
+            let volume = Math.min(0.1, impactSpeed * 0.015);
+            gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+            
+            // Fast decay for a sharp "tink"
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.05);
+        }
+
+        // --- Inputs ---
         document.getElementById('start-btn').addEventListener('click', () => {
+            // Init Audio
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Init Tilt
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                // iOS 13+ requires explicit permission
                 DeviceOrientationEvent.requestPermission()
                     .then(permissionState => {
                         if (permissionState === 'granted') {
                             window.addEventListener('deviceorientation', handleOrientation);
-                            startGame();
                         } else {
-                            alert("Permission denied. The game needs motion access to work.");
+                            alert("Tilt permission denied.");
                         }
-                    })
-                    .catch(console.error);
+                        startGame();
+                    }).catch(console.error);
             } else {
-                // Non iOS 13+ devices
                 window.addEventListener('deviceorientation', handleOrientation);
                 startGame();
             }
         });
-
-        function handleOrientation(e) {
-            // Gamma is left-to-right tilt in degrees, where right is positive
-            // Beta is front-to-back tilt in degrees, where front is positive
-            let tiltX = e.gamma; 
-            let tiltY = e.beta; 
-
-            // Clamp values
-            if (tiltX > 90) tiltX = 90;
-            if (tiltX < -90) tiltX = -90;
-            
-            // Adjust sensitivity and convert to gravity vector
-            gravityX = (tiltX / 90) * 0.8;
-            gravityY = (tiltY / 90) * 0.8;
-        }
 
         function startGame() {
             document.getElementById('start-overlay').style.display = 'none';
             loop();
         }
 
-        // Draw Barriers
+        function handleOrientation(e) {
+            let tiltX = e.gamma; 
+            let tiltY = e.beta; 
+
+            if (tiltX > 90) tiltX = 90;
+            if (tiltX < -90) tiltX = -90;
+            
+            gravityX = (tiltX / 90) * 0.6;
+            gravityY = (tiltY / 90) * 0.6;
+        }
+
+        // Draw Solid Barriers
         canvas.addEventListener('pointermove', (e) => {
             if (e.buttons > 0) {
                 barriers.push({ x: e.clientX, y: e.clientY, radius: 15 });
-                // Keep memory from overloading by limiting barriers
-                if (barriers.length > 200) barriers.shift(); 
+                if (barriers.length > 150) barriers.shift(); // Keep memory clean
             }
         });
 
+        // --- Physics Loop ---
         function loop() {
-            // Draw background with slight trail effect
-            ctx.fillStyle = 'rgba(15, 15, 19, 0.4)';
+            soundsThisFrame = 0; // Reset audio throttle
+
+            // Draw background
+            ctx.fillStyle = '#0f0f13';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Draw Barriers
+            // Draw Drawn Barriers
             ctx.fillStyle = '#333344';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#555566';
             barriers.forEach(b => {
                 ctx.beginPath();
                 ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
                 ctx.fill();
             });
+            ctx.shadowBlur = 0; // Reset
 
-            // Update & Draw Particles
+            // 1. Apply Gravity and Movement
             for (let i = 0; i < numParticles; i++) {
                 let p = particles[i];
-
-                // Apply Gravity
                 p.vx += gravityX;
                 p.vy += gravityY;
-
-                // Add some friction/damping so they don't accelerate infinitely
-                p.vx *= 0.98;
-                p.vy *= 0.98;
+                
+                // Air friction
+                p.vx *= 0.99;
+                p.vy *= 0.99;
 
                 p.x += p.vx;
                 p.y += p.vy;
 
-                // Wall Collisions
-                if (p.x < p.radius) { p.x = p.radius; p.vx *= -0.5; }
-                if (p.x > canvas.width - p.radius) { p.x = canvas.width - p.radius; p.vx *= -0.5; }
-                if (p.y < p.radius) { p.y = p.radius; p.vy *= -0.5; }
-                if (p.y > canvas.height - p.radius) { p.y = canvas.height - p.radius; p.vy *= -0.5; }
+                // 2. Screen Boundaries (Wall Hit)
+                let hitWall = false;
+                if (p.x < p.radius) { p.x = p.radius; hitWall = true; p.vx *= -0.8; }
+                if (p.x > canvas.width - p.radius) { p.x = canvas.width - p.radius; hitWall = true; p.vx *= -0.8; }
+                if (p.y < p.radius) { p.y = p.radius; hitWall = true; p.vy *= -0.8; }
+                if (p.y > canvas.height - p.radius) { p.y = canvas.height - p.radius; hitWall = true; p.vy *= -0.8; }
+                
+                if (hitWall) playClink(Math.abs(p.vx) + Math.abs(p.vy), 'wall');
+            }
 
-                // Barrier Collisions
+            // 3. Resolve Particle-to-Particle Collisions
+            for (let i = 0; i < numParticles; i++) {
+                for (let j = i + 1; j < numParticles; j++) {
+                    let p1 = particles[i];
+                    let p2 = particles[j];
+                    
+                    let dx = p2.x - p1.x;
+                    let dy = p2.y - p1.y;
+                    let distSq = dx*dx + dy*dy;
+                    let minDist = p1.radius + p2.radius;
+
+                    if (distSq < minDist * minDist) {
+                        let dist = Math.sqrt(distSq);
+                        let nx = dx / dist;
+                        let ny = dy / dist;
+
+                        // Strict Position Separation (stops them from getting stuck inside each other)
+                        let overlap = minDist - dist;
+                        p1.x -= nx * (overlap / 2);
+                        p1.y -= ny * (overlap / 2);
+                        p2.x += nx * (overlap / 2);
+                        p2.y += ny * (overlap / 2);
+
+                        // Velocity Reflection
+                        let dvx = p2.vx - p1.vx;
+                        let dvy = p2.vy - p1.vy;
+                        let relVel = dvx * nx + dvy * ny;
+
+                        // If they are moving towards each other, bounce!
+                        if (relVel < 0) {
+                            let restitution = 0.85; // Bounciness
+                            let impulse = -(1 + restitution) * relVel / 2;
+                            
+                            p1.vx -= impulse * nx;
+                            p1.vy -= impulse * ny;
+                            p2.vx += impulse * nx;
+                            p2.vy += impulse * ny;
+
+                            playClink(Math.abs(relVel), 'bead');
+                        }
+                    }
+                }
+            }
+
+            // 4. Resolve Particle-to-Barrier Collisions
+            for (let i = 0; i < numParticles; i++) {
+                let p = particles[i];
                 for (let j = 0; j < barriers.length; j++) {
                     let b = barriers[j];
                     let dx = p.x - b.x;
                     let dy = p.y - b.y;
-                    let distance = Math.hypot(dx, dy);
+                    let distSq = dx*dx + dy*dy;
                     let minDist = p.radius + b.radius;
 
-                    if (distance < minDist) {
-                        // Push particle out of the barrier
-                        let angle = Math.atan2(dy, dx);
-                        let targetX = b.x + Math.cos(angle) * minDist;
-                        let targetY = b.y + Math.sin(angle) * minDist;
-                        
-                        p.vx += (targetX - p.x) * 0.1;
-                        p.vy += (targetY - p.y) * 0.1;
+                    if (distSq < minDist * minDist) {
+                        let dist = Math.sqrt(distSq);
+                        let nx = dx / dist;
+                        let ny = dy / dist;
+
+                        // Strict Position Correction (Fixes the Tunneling!)
+                        let overlap = minDist - dist;
+                        p.x += nx * overlap;
+                        p.y += ny * overlap;
+
+                        // Reflect Velocity off the wall normal
+                        let dotProduct = (p.vx * nx + p.vy * ny);
+                        if (dotProduct < 0) { 
+                            let restitution = 0.9; // Very bouncy barriers
+                            p.vx -= (1 + restitution) * dotProduct * nx;
+                            p.vy -= (1 + restitution) * dotProduct * ny;
+
+                            playClink(Math.abs(dotProduct), 'wall');
+                        }
                     }
                 }
+            }
 
-                // Draw Particle
+            // 5. Draw Particles
+            for (let i = 0; i < numParticles; i++) {
+                let p = particles[i];
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
                 ctx.fillStyle = p.color;
-                ctx.shadowBlur = 10;
+                
+                // Add a glow to the crystals
+                ctx.shadowBlur = 8;
                 ctx.shadowColor = p.color;
                 ctx.fill();
-                ctx.shadowBlur = 0; // Reset shadow for performance
+                
+                // Add a tiny white center highlight
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(p.x - p.radius*0.2, p.y - p.radius*0.2, p.radius*0.3, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.fill();
             }
 
             requestAnimationFrame(loop);
