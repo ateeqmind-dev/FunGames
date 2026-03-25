@@ -19,16 +19,37 @@
         #btn-info { left: 20px; }
         #btn-back { right: 20px; }
 
-        /* Info Modal */
+        /* Start Overlay (Required for Audio) */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
+        }
+        #start-btn {
+            padding: 15px 30px; font-size: 1.2rem; background: #a200ff; color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px;
+        }
+
+        /* Info Modal & Settings */
         #info-modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #1c1c24; border: 1px solid #a200ff; padding: 30px; border-radius: 16px;
-            width: 80%; max-width: 400px; text-align: center; z-index: 40; color: white;
+            background: #1c1c24; border: 1px solid #a200ff; padding: 25px; border-radius: 16px;
+            width: 85%; max-width: 400px; text-align: center; z-index: 40; color: white;
             box-shadow: 0 0 30px rgba(162, 0, 255, 0.2); display: none;
         }
+        
+        .settings-container {
+            background: rgba(0,0,0,0.3); padding: 15px; border-radius: 12px; margin: 15px 0; text-align: left;
+        }
+        .setting-row { margin-bottom: 10px; }
+        .setting-row label { display: flex; justify-content: space-between; font-size: 0.9rem; color: #888899; margin-bottom: 5px; }
+        .setting-row input[type=range] {
+            width: 100%; accent-color: #a200ff; background: #333; height: 6px; border-radius: 3px; outline: none;
+        }
+
         .close-modal { 
             background: #a200ff; color: white; border: none; padding: 10px 20px; 
-            border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
+            border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 10px;
         }
     </style>
 </head>
@@ -39,8 +60,28 @@
 
     <div id="info-modal">
         <h2 style="color: #a200ff; margin-bottom: 10px;">Plasma Web</h2>
-        <p style="color: #888899; line-height: 1.5;">Touch and drag your fingers across the void to spawn energy nodes.<br><br>Nodes that are close to each other will automatically connect, creating a physics-based geometric web that slowly fades into the dark.</p>
+        <p style="color: #888899; line-height: 1.4; font-size: 0.95rem;">
+            Touch and drag to spawn energy nodes.<br>Listen to the plasma stretch as the nodes connect!
+        </p>
+
+        <div class="settings-container">
+            <div class="setting-row">
+                <label><span>Dot Moving Speed</span> <span id="speed-val">1.0x</span></label>
+                <input type="range" id="speed-slider" min="0" max="30" value="10">
+            </div>
+            <div class="setting-row">
+                <label><span>Dot Lifespan</span> <span id="life-val">3s</span></label>
+                <input type="range" id="life-slider" min="1" max="10" value="3">
+            </div>
+        </div>
+
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
+    </div>
+
+    <div id="start-overlay">
+        <h2>Audio Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Click start to enable the dynamic stretching synthesizer.</p>
+        <button id="start-btn">Enable Audio & Start</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -56,47 +97,95 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // UI Logic
-        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
+        // UI Setup
+        const infoModal = document.getElementById('info-modal');
+        const speedSlider = document.getElementById('speed-slider');
+        const speedValDisplay = document.getElementById('speed-val');
+        const lifeSlider = document.getElementById('life-slider');
+        const lifeValDisplay = document.getElementById('life-val');
+        
+        document.getElementById('btn-info').onclick = () => infoModal.style.display = 'block';
+        
+        speedSlider.addEventListener('input', (e) => speedValDisplay.innerText = (e.target.value / 10).toFixed(1) + 'x');
+        lifeSlider.addEventListener('input', (e) => lifeValDisplay.innerText = e.target.value + 's');
+
+        // Audio Synthesis (The Stretching Sound)
+        let audioCtx, synthOsc, synthFilter, synthGain;
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Create an electric buzzing sawtooth wave
+            synthOsc = audioCtx.createOscillator();
+            synthOsc.type = 'sawtooth';
+            
+            // Run it through a lowpass filter (opens up as plasma stretches)
+            synthFilter = audioCtx.createBiquadFilter();
+            synthFilter.type = 'lowpass';
+            synthFilter.Q.value = 5; // Adds a bit of resonance/whine
+            
+            // Volume control
+            synthGain = audioCtx.createGain();
+            synthGain.gain.value = 0; // Start silent
+
+            // Connect graph: Osc -> Filter -> Gain -> Speakers
+            synthOsc.connect(synthFilter);
+            synthFilter.connect(synthGain);
+            synthGain.connect(audioCtx.destination);
+            
+            synthOsc.start();
+
+            document.getElementById('start-overlay').style.display = 'none';
+            loop(); // Start rendering
+        });
 
         // Game State
         let nodes = [];
-        const maxConnectionDistance = 120;
+        const maxConnectionDistance = 140;
 
         // Input Handling
         function spawnNode(x, y) {
+            let speedMulti = speedSlider.value / 10;
             nodes.push({
                 x: x, 
                 y: y,
-                vx: (Math.random() - 0.5) * 2, // Drift velocity
-                vy: (Math.random() - 0.5) * 2,
-                life: 255 // Fade out over time
+                vx: (Math.random() - 0.5) * 3 * speedMulti,
+                vy: (Math.random() - 0.5) * 3 * speedMulti,
+                life: 255
             });
         }
 
-        // Pointer events support both mouse and touch smoothly
         canvas.addEventListener('pointerdown', (e) => spawnNode(e.clientX, e.clientY));
         canvas.addEventListener('pointermove', (e) => {
-            // e.buttons > 0 checks if the screen is actively being touched/clicked during the move
-            if (e.buttons > 0) {
-                // Add a node every few pixels to prevent overwhelming the array
-                if (Math.random() > 0.5) spawnNode(e.clientX, e.clientY);
+            if (e.buttons > 0 && Math.random() > 0.4) {
+                spawnNode(e.clientX, e.clientY);
             }
         });
 
         function loop() {
             // Dark trail effect for the background
-            ctx.fillStyle = '#0f0f13';
+            ctx.fillStyle = 'rgba(15, 15, 19, 0.3)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Calculate fade decrement based on UI slider (Assuming ~60fps)
+            let seconds = parseInt(lifeSlider.value);
+            let lifeDecrement = 255 / (seconds * 60);
+
+            // Audio Modulation Variables
+            let totalConnections = 0;
+            let averageStretch = 0;
 
             // Update nodes
             for (let i = nodes.length - 1; i >= 0; i--) {
                 let n = nodes[i];
                 n.x += n.vx;
                 n.y += n.vy;
-                n.life -= 1.5; // Drain life
+                n.life -= lifeDecrement;
 
-                // Remove dead nodes
+                // Bounce off walls
+                if(n.x < 0 || n.x > canvas.width) n.vx *= -1;
+                if(n.y < 0 || n.y > canvas.height) n.vy *= -1;
+
                 if (n.life <= 0) {
                     nodes.splice(i, 1);
                     continue;
@@ -110,18 +199,19 @@
                     let distance = Math.hypot(dx, dy);
 
                     if (distance < maxConnectionDistance) {
-                        // The closer they are, the more opaque the line
+                        totalConnections++;
+                        averageStretch += distance;
+
                         let opacity = (1 - (distance / maxConnectionDistance)) * (n.life / 255);
                         
                         ctx.beginPath();
                         ctx.moveTo(n.x, n.y);
                         ctx.lineTo(n2.x, n2.y);
                         
-                        // Mix neon purple and electric blue based on connection length
                         if (distance < 50) {
-                            ctx.strokeStyle = `rgba(0, 240, 255, ${opacity})`; // Cyan for tight clusters
+                            ctx.strokeStyle = `rgba(0, 240, 255, ${opacity})`; // Cyan
                         } else {
-                            ctx.strokeStyle = `rgba(162, 0, 255, ${opacity})`; // Purple for long stretches
+                            ctx.strokeStyle = `rgba(162, 0, 255, ${opacity})`; // Purple
                         }
                         
                         ctx.lineWidth = 1.5;
@@ -129,18 +219,37 @@
                     }
                 }
 
-                // Draw the node point itself
+                // Draw the node point
                 ctx.beginPath();
                 ctx.arc(n.x, n.y, 2, 0, Math.PI * 2);
                 ctx.fillStyle = `rgba(255, 255, 255, ${n.life / 255})`;
                 ctx.fill();
             }
 
+            // --- Synthesizer Modulation Logic ---
+            if (audioCtx && synthGain) {
+                if (totalConnections > 0) {
+                    averageStretch = averageStretch / totalConnections;
+                    
+                    // The more stretched the connections, the higher the filter opens (brighter sound)
+                    let targetFreq = 200 + (averageStretch * 15);
+                    // The more total connections, the louder and slightly higher pitched the base sound is
+                    let targetVolume = Math.min(0.2, totalConnections * 0.005);
+                    let targetPitch = 50 + Math.min(100, totalConnections * 2);
+
+                    // Smoothly transition the audio values so it doesn't pop or click
+                    synthFilter.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.1);
+                    synthGain.gain.setTargetAtTime(targetVolume, audioCtx.currentTime, 0.1);
+                    synthOsc.frequency.setTargetAtTime(targetPitch, audioCtx.currentTime, 0.2);
+                } else {
+                    // Fade out to silent if nothing is connecting
+                    synthGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.2);
+                    synthFilter.frequency.setTargetAtTime(200, audioCtx.currentTime, 0.2);
+                }
+            }
+
             requestAnimationFrame(loop);
         }
-
-        // Start animation loop
-        loop();
     </script>
 </body>
 </html>
