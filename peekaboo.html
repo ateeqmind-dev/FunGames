@@ -11,8 +11,8 @@
         /* UI Buttons */
         .btn {
             position: absolute; top: 20px; width: 40px; height: 40px;
-            border-radius: 50%; background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%; background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.4);
             color: white; font-size: 1.2rem; display: flex; justify-content: center;
             align-items: center; cursor: pointer; z-index: 20; text-decoration: none;
         }
@@ -22,7 +22,7 @@
         /* Start Overlay */
         #start-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(15, 15, 19, 0.9); display: flex; flex-direction: column;
+            background: rgba(15, 15, 19, 0.95); display: flex; flex-direction: column;
             justify-content: center; align-items: center; z-index: 30; color: white; text-align: center; padding: 20px;
         }
         #start-btn {
@@ -42,7 +42,6 @@
             border-radius: 8px; cursor: pointer; margin-top: 20px; font-weight: bold;
         }
 
-        /* Hidden video element for light detection */
         #cam-video { display: none; }
     </style>
 </head>
@@ -52,15 +51,15 @@
     <a href="index.html" class="btn" id="btn-back">✖</a>
 
     <div id="info-modal">
-        <h2 style="color: #00ff88; margin-bottom: 10px;">Peek-a-Boo Geometry</h2>
-        <p style="color: #888899; line-height: 1.5;">This game uses your front camera to detect light.<br><br>Hover your hand over the screen to cast a shadow. The darker it gets, the more the hidden mandala reveals its vibrant colors.</p>
+        <h2 style="color: #00ff88; margin-bottom: 10px;">Day & Night</h2>
+        <p style="color: #888899; line-height: 1.5;">This world reacts to the light in your room.<br><br><b>Cover your camera</b> or turn off the lights to see the stars and hear the crickets. Reveal the camera to the light to bring out the sun and the birds!</p>
         <button class="close-modal" onclick="document.getElementById('info-modal').style.display='none'">Got it</button>
     </div>
 
     <div id="start-overlay">
-        <h2>Camera Access Required</h2>
-        <p style="color: #888899; margin-top: 10px;">Used locally to detect ambient light. No video is recorded.</p>
-        <button id="start-btn">Enable Camera & Start</button>
+        <h2>Camera & Audio Required</h2>
+        <p style="color: #888899; margin-top: 10px;">Used to detect ambient light and play environmental sounds.</p>
+        <button id="start-btn">Enable & Start</button>
     </div>
 
     <video id="cam-video" autoplay playsinline></video>
@@ -71,11 +70,9 @@
         const ctx = canvas.getContext('2d');
         const video = document.getElementById('cam-video');
         
-        // Offscreen canvas for sampling light
         const offscreenCanvas = document.createElement('canvas');
         const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
-        offscreenCanvas.width = 32;
-        offscreenCanvas.height = 32;
+        offscreenCanvas.width = 32; offscreenCanvas.height = 32;
 
         function resize() {
             canvas.width = window.innerWidth;
@@ -86,138 +83,257 @@
 
         document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
 
-        let rotation = 0;
-        let ambientLightLevel = 255; // 0 (dark) to 255 (bright)
-        let smoothedLightLevel = 255;
+        // --- State ---
+        let ambientLightLevel = 255;
+        let smoothedLight = 255;
+        let dayRatio = 1; // 1 = Full Day, 0 = Full Night
+        let time = 0;
 
-        // Start Camera
+        // Entities
+        let stars = [];
+        let birds = [];
+        let fireflies = [];
+
+        for(let i=0; i<100; i++) {
+            stars.push({ x: Math.random(), y: Math.random() * 0.7, size: Math.random() * 1.5 + 0.5, blinkOffset: Math.random() * Math.PI * 2 });
+        }
+        for(let i=0; i<30; i++) {
+            fireflies.push({ x: Math.random(), y: 0.7 + Math.random() * 0.3, offset: Math.random() * 100, speed: 0.5 + Math.random() });
+        }
+
+        function spawnBird() {
+            birds.push({
+                x: -50,
+                y: canvas.height * 0.1 + Math.random() * canvas.height * 0.4,
+                vx: 2 + Math.random() * 2,
+                vy: (Math.random() - 0.5) * 0.5,
+                flapSpeed: 0.1 + Math.random() * 0.1,
+                flapOffset: Math.random() * Math.PI * 2,
+                size: 10 + Math.random() * 10
+            });
+        }
+
+        // --- Audio Synthesizer ---
+        let audioCtx, dayGain, nightGain;
+
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            dayGain = audioCtx.createGain();
+            nightGain = audioCtx.createGain();
+            
+            dayGain.connect(audioCtx.destination);
+            nightGain.connect(audioCtx.destination);
+            
+            scheduleBirdSound();
+            scheduleCricketSound();
+        }
+
+        function scheduleBirdSound() {
+            if (audioCtx && dayRatio > 0.1) {
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(dayGain);
+
+                osc.type = 'sine';
+                let startFreq = 3000 + Math.random() * 2000;
+                osc.frequency.setValueAtTime(startFreq, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(startFreq - 1000, audioCtx.currentTime + 0.1);
+
+                gain.gain.setValueAtTime(0, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.05);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+            }
+            setTimeout(scheduleBirdSound, 500 + Math.random() * 2000); // Random chirps
+        }
+
+        function scheduleCricketSound() {
+            if (audioCtx && dayRatio < 0.9) {
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(nightGain);
+
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(4500 + Math.random() * 200, audioCtx.currentTime);
+
+                gain.gain.setValueAtTime(0, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.02, audioCtx.currentTime + 0.01);
+                gain.gain.setValueAtTime(0, audioCtx.currentTime + 0.05);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.05);
+            }
+            // Crickets chirp in rhythmic pairs
+            let nextChirp = Math.random() > 0.5 ? 100 : 400;
+            setTimeout(scheduleCricketSound, nextChirp);
+        }
+
+        // --- Camera & Setup ---
         document.getElementById('start-btn').addEventListener('click', async () => {
+            initAudio();
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "user" }, 
-                    audio: false 
-                });
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
                 video.srcObject = stream;
-                
                 video.onloadedmetadata = () => {
                     document.getElementById('start-overlay').style.display = 'none';
                     loop();
                 };
             } catch (err) {
-                alert("Camera access denied or not available. Light detection won't work.");
+                alert("Camera access denied. It will be permanently Daytime!");
+                document.getElementById('start-overlay').style.display = 'none';
+                loop();
             }
         });
 
-        // Calculate average brightness from the camera feed
+        // --- Math & Colors ---
         function calculateBrightness() {
             if (video.readyState === video.HAVE_ENOUGH_DATA) {
                 offscreenCtx.drawImage(video, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-                const imageData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
-                const data = imageData.data;
-                
-                let r, g, b, avg;
+                const data = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height).data;
                 let colorSum = 0;
-
-                for (let x = 0, len = data.length; x < len; x += 4) {
-                    r = data[x];
-                    g = data[x + 1];
-                    b = data[x + 2];
-                    avg = Math.floor((r + g + b) / 3);
-                    colorSum += avg;
+                for (let x = 0; x < data.length; x += 4) {
+                    colorSum += Math.floor((data[x] + data[x + 1] + data[x + 2]) / 3);
                 }
-                
                 ambientLightLevel = Math.floor(colorSum / (offscreenCanvas.width * offscreenCanvas.height));
             }
         }
 
-        function drawMandala(x, y, radius, revealFactor) {
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(rotation);
-
-            const numLayers = 6;
-            
-            for (let layer = 1; layer <= numLayers; layer++) {
-                const currentRadius = radius * (layer / numLayers);
-                const points = 6 + (layer * 2);
-                const angleStep = (Math.PI * 2) / points;
-
-                ctx.beginPath();
-                for (let i = 0; i < points; i++) {
-                    const angle = i * angleStep;
-                    const px = Math.cos(angle) * currentRadius;
-                    const py = Math.sin(angle) * currentRadius;
-                    
-                    if (i === 0) ctx.moveTo(px, py);
-                    else ctx.lineTo(px, py);
-                }
-                ctx.closePath();
-
-                // Base style: dim outline
-                ctx.strokeStyle = `rgba(255, 255, 255, 0.1)`;
-                ctx.lineWidth = 1;
-                
-                // Reveal style: vibrant colors when shadowed
-                if (revealFactor > 0.1) {
-                    const hue = (layer * 40 + rotation * 50) % 360;
-                    ctx.strokeStyle = `hsla(${hue}, 100%, 50%, ${revealFactor})`;
-                    ctx.lineWidth = 2 + (revealFactor * 2);
-                    ctx.shadowBlur = 10 * revealFactor;
-                    ctx.shadowColor = `hsla(${hue}, 100%, 50%, ${revealFactor})`;
-                    
-                    // Fill outer layers slightly
-                    if (layer > 3) {
-                        ctx.fillStyle = `hsla(${hue}, 100%, 10%, ${revealFactor * 0.5})`;
-                        ctx.fill();
-                    }
-                }
-                
-                ctx.stroke();
-                
-                // Draw connecting lines to center for inner layers
-                if (layer === 2 || layer === 4) {
-                    for (let i = 0; i < points; i++) {
-                        const angle = i * angleStep;
-                        ctx.beginPath();
-                        ctx.moveTo(0, 0);
-                        ctx.lineTo(Math.cos(angle) * currentRadius, Math.sin(angle) * currentRadius);
-                        ctx.stroke();
-                    }
-                }
-            }
-            
-            ctx.restore();
+        // Interpolate between two hex colors (e.g., #FFFFFF)
+        function lerpColor(a, b, amount) { 
+            const ah = parseInt(a.replace(/#/g, ''), 16),
+                  ar = ah >> 16, ag = ah >> 8 & 0xff, ab = ah & 0xff,
+                  bh = parseInt(b.replace(/#/g, ''), 16),
+                  br = bh >> 16, bg = bh >> 8 & 0xff, bb = bh & 0xff,
+                  rr = ar + amount * (br - ar),
+                  rg = ag + amount * (bg - ag),
+                  rb = ab + amount * (bb - ab);
+            return '#' + (((1 << 24) + (rr << 16) + (rg << 8) + rb) | 0).toString(16).slice(1);
         }
 
         function loop() {
-            // Check light every frame
+            time += 0.05;
             calculateBrightness();
             
-            // Smooth the light transition so it doesn't flicker wildly
-            smoothedLightLevel += (ambientLightLevel - smoothedLightLevel) * 0.1;
+            // Smooth light and map to 0.0 (Night) to 1.0 (Day)
+            smoothedLight += (ambientLightLevel - smoothedLight) * 0.05;
+            dayRatio = Math.max(0, Math.min(1, (smoothedLight - 30) / 80));
 
-            // Map light level (approx 20 to 150 indoors) to a reveal factor (0.0 to 1.0)
-            // If it's dark (< 50), reveal is 1.0. If bright (> 120), reveal is 0.0.
-            let reveal = 1 - Math.max(0, Math.min(1, (smoothedLightLevel - 40) / 80));
+            // Crossfade Audio Volumes
+            if (audioCtx) {
+                dayGain.gain.setTargetAtTime(dayRatio, audioCtx.currentTime, 0.1);
+                nightGain.gain.setTargetAtTime(1 - dayRatio, audioCtx.currentTime, 0.1);
+            }
 
-            // Background
-            ctx.fillStyle = '#0f0f13';
+            // --- Draw Sky ---
+            let topColor = lerpColor('#040b14', '#55b4ff', dayRatio);
+            let botColor = lerpColor('#13182b', '#bce6ff', dayRatio);
+            
+            let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            skyGrad.addColorStop(0, topColor);
+            skyGrad.addColorStop(1, botColor);
+            ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Draw center geometric structure
-            rotation += 0.005;
-            const maxRadius = Math.min(canvas.width, canvas.height) * 0.4;
-            
-            drawMandala(canvas.width / 2, canvas.height / 2, maxRadius, reveal);
+            // --- Draw Stars (Night) ---
+            if (dayRatio < 1) {
+                ctx.fillStyle = '#ffffff';
+                stars.forEach(s => {
+                    let blink = (Math.sin(time * 0.5 + s.blinkOffset) + 1) / 2;
+                    ctx.globalAlpha = (1 - dayRatio) * blink;
+                    ctx.beginPath();
+                    ctx.arc(s.x * canvas.width, s.y * canvas.height, s.size, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                ctx.globalAlpha = 1.0;
+            }
 
-            // Draw ambient particles that also react
-            ctx.fillStyle = `rgba(0, 255, 136, ${reveal * 0.5})`;
-            for(let i = 0; i < 20; i++) {
-                const px = (Math.sin(rotation * i + i) * 0.5 + 0.5) * canvas.width;
-                const py = (Math.cos(rotation * i - i) * 0.5 + 0.5) * canvas.height;
+            // --- Draw Sun and Moon ---
+            // Sun rises as dayRatio goes to 1. Moon rises as dayRatio goes to 0.
+            let sunY = canvas.height * 0.8 - (dayRatio * canvas.height * 0.6);
+            let moonY = canvas.height * 0.8 - ((1 - dayRatio) * canvas.height * 0.6);
+            let centerX = canvas.width / 2;
+
+            // Draw Moon
+            ctx.fillStyle = '#f6f6f6';
+            ctx.shadowBlur = 30; ctx.shadowColor = 'rgba(255,255,255,0.5)';
+            ctx.beginPath(); ctx.arc(centerX + 100, moonY, 40, 0, Math.PI * 2); ctx.fill();
+            // Moon craters
+            ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 0;
+            ctx.beginPath(); ctx.arc(centerX + 90, moonY - 10, 10, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(centerX + 115, moonY + 15, 8, 0, Math.PI * 2); ctx.fill();
+
+            // Draw Sun
+            ctx.fillStyle = '#ffe600';
+            ctx.shadowBlur = 50; ctx.shadowColor = '#ffaa00';
+            ctx.beginPath(); ctx.arc(centerX - 100, sunY, 50, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // --- Draw Birds (Day) ---
+            if (dayRatio > 0.3 && Math.random() < 0.02 && birds.length < 8) spawnBird();
+            
+            ctx.strokeStyle = `rgba(0, 0, 0, ${dayRatio})`; // Fade out at night
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            for (let i = birds.length - 1; i >= 0; i--) {
+                let b = birds[i];
+                b.x += b.vx;
+                b.y += b.vy;
+                
+                let flap = Math.sin(time * b.flapSpeed + b.flapOffset) * (b.size * 0.5);
+                
                 ctx.beginPath();
-                ctx.arc(px, py, 2 * reveal, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.moveTo(b.x, b.y);
+                ctx.quadraticCurveTo(b.x + b.size/2, b.y - flap, b.x + b.size, b.y - b.size*0.3);
+                ctx.moveTo(b.x, b.y);
+                ctx.quadraticCurveTo(b.x - b.size/2, b.y - flap, b.x - b.size, b.y - b.size*0.3);
+                ctx.stroke();
+
+                if (b.x > canvas.width + 50) birds.splice(i, 1);
+            }
+
+            // --- Draw Grass/Hills ---
+            let hillColorDark = lerpColor('#06140e', '#328a45', dayRatio);
+            let hillColorLight = lerpColor('#0a1f16', '#4caf50', dayRatio);
+
+            ctx.fillStyle = hillColorDark;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height);
+            ctx.lineTo(0, canvas.height * 0.7);
+            ctx.bezierCurveTo(canvas.width * 0.3, canvas.height * 0.6, canvas.width * 0.7, canvas.height * 0.9, canvas.width, canvas.height * 0.75);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.fill();
+
+            ctx.fillStyle = hillColorLight;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height);
+            ctx.lineTo(0, canvas.height * 0.8);
+            ctx.bezierCurveTo(canvas.width * 0.4, canvas.height * 0.7, canvas.width * 0.6, canvas.height * 0.85, canvas.width, canvas.height * 0.8);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.fill();
+
+            // --- Draw Fireflies (Night) ---
+            if (dayRatio < 0.7) {
+                fireflies.forEach(f => {
+                    let px = (f.x * canvas.width) + Math.sin(time * f.speed + f.offset) * 20;
+                    let py = (f.y * canvas.height) + Math.cos(time * f.speed * 0.8 + f.offset) * 15;
+                    
+                    let glow = (Math.sin(time * 2 + f.offset) + 1) / 2; // Pulsing glow
+                    let nightFactor = (1 - dayRatio);
+
+                    ctx.fillStyle = `rgba(200, 255, 0, ${glow * nightFactor})`;
+                    ctx.shadowBlur = 15; ctx.shadowColor = '#c8ff00';
+                    ctx.beginPath();
+                    ctx.arc(px, py, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                ctx.shadowBlur = 0;
             }
 
             requestAnimationFrame(loop);
