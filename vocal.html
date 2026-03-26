@@ -82,30 +82,20 @@
         const ctx = canvas.getContext('2d');
         const scoreDisplay = document.getElementById('score');
 
-        function resize() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            ball.y = canvas.height / 2;
-        }
-        window.addEventListener('resize', resize);
-        resize();
-
-        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
-
         // Audio State
         let audioCtx, analyser, microphone, dataArray;
         // Frequency bounds for vocal pitch (adjust if it feels too hard to reach top/bottom)
         const minFreq = 100;  // Deep hum
         const maxFreq = 800;  // High whistle/falsetto
         
-        // Game State
+        // Game State Defined FIRST
         let score = 0;
         let gameSpeed = 3;
         
         let ball = {
-            x: canvas.width * 0.2, // Fixed horizontal position (20% from left)
-            y: canvas.height / 2,
-            targetY: canvas.height / 2,
+            x: window.innerWidth * 0.2, // Fixed horizontal position (20% from left)
+            y: window.innerHeight / 2,
+            targetY: window.innerHeight / 2,
             radius: 12
         };
 
@@ -113,6 +103,17 @@
         const holeSize = 120; // Size of the gap
         const obstacleWidth = 60;
         let framesSinceLastObstacle = 0;
+
+        // NOW we can safely resize because 'ball' exists
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (ball) ball.y = canvas.height / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        document.getElementById('btn-info').onclick = () => document.getElementById('info-modal').style.display = 'block';
 
         function spawnObstacle() {
             // Randomize hole height, keeping it away from the extreme edges
@@ -147,7 +148,7 @@
                 spawnObstacle();
                 loop();
             } catch (err) {
-                alert("Microphone access denied.");
+                alert("Microphone access denied. The game cannot track your pitch.");
             }
         });
 
@@ -209,11 +210,9 @@
             // Prevent ball going completely off screen
             ball.y = Math.max(ball.radius, Math.min(ball.y, canvas.height - ball.radius));
 
-
             // 2. Draw Background
             ctx.fillStyle = '#0f0f13';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-
 
             // 3. Update & Draw Obstacles
             framesSinceLastObstacle++;
@@ -270,7 +269,6 @@
                     obstacles.splice(i, 1);
                 }
             }
-
 
             // 4. Draw Ball
             ctx.beginPath();
